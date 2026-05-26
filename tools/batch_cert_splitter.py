@@ -87,6 +87,50 @@ def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
         os.unlink(tmp_path)
 
 
+# ── OCR：Linux / 麒麟 Tesseract ──────────────────────────────
+def _ocr_page_tesseract(page: "fitz.Page", dpi: int = 200) -> str:
+    """
+    用 Tesseract OCR 对 PDF 单页进行识别，返回文字字符串。
+    适用于 Linux / 麒麟 UOS 等非 macOS 系统。
+    依赖：sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra
+          pip3 install pytesseract
+    """
+    try:
+        import pytesseract
+    except ImportError:
+        raise RuntimeError(
+            "pytesseract 未安装。请运行：\n"
+            "  sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra\n"
+            "  pip3 install pytesseract"
+        )
+
+    import tempfile, os
+
+    scale = dpi / 72
+    mat = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp_path = f.name
+    try:
+        pix.save(tmp_path)
+        return pytesseract.image_to_string(
+            tmp_path,
+            lang="chi_sim+chi_tra+eng",
+            config="--psm 6",
+        )
+    finally:
+        os.unlink(tmp_path)
+
+
+def _ocr_page(page: "fitz.Page", dpi: int = 200) -> str:
+    """自动选择 OCR 引擎：macOS 用 Vision，其他系统用 Tesseract。"""
+    if sys.platform == "darwin":
+        return _ocr_page_vision(page, dpi)
+    else:
+        return _ocr_page_tesseract(page, dpi)
+
+
 # ── 自动识别：首页特征 ────────────────────────────────────────
 # 高置信关键词分两类：
 #   EXACT  — 直接子串匹配（这些词不会出现在正文句子中）
@@ -517,8 +561,9 @@ def cmd_detect(args: argparse.Namespace) -> None:
     total_pages = len(src)
     log.info(f"PDF 总页数: {total_pages}")
 
+    engine = "macOS Vision" if sys.platform == "darwin" else "Tesseract"
     if use_ocr:
-        log.info(f"OCR 模式（macOS Vision，DPI={dpi}）——扫描版 PDF")
+        log.info(f"OCR 模式（{engine}，DPI={dpi}）——扫描版 PDF")
     else:
         # 自动检测：若第1页文字量极少则切换 OCR
         sample = src[0].get_text().strip()
@@ -534,7 +579,7 @@ def cmd_detect(args: argparse.Namespace) -> None:
     for i in range(total_pages):
         if use_ocr:
             try:
-                text = _ocr_page_vision(src[i], dpi=dpi)
+                text = _ocr_page(src[i], dpi=dpi)
             except RuntimeError as e:
                 log.error(str(e))
                 sys.exit(1)
