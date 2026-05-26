@@ -114,14 +114,11 @@ _RE_BATCH_NO = re.compile(
     re.IGNORECASE,
 )
 
-# 批签发号：LRA20260923 / LRH20250448 / 批签中检20260923 等
-_RE_CERT_NO = re.compile(
-    r'(?:'
-    r'((?:LRA|LRH|LRC|LRB)\d{6,})'            # 国际格式 LRA/LRH...
-    r'|批签[^\d\n]{0,6}(\d{6,})'               # 批签中检/批签鄂检... + 数字
-    r')',
-    re.IGNORECASE,
-)
+# 批签发号：两种格式均完整保留前缀
+#   国际格式：LRA20260923 / LRH20250448 / LRN20260012 / LRG20250220（LR+任意字母+数字）
+#   中文格式：批签中检20260923 / 批签鄂检20250448 / 批签甘检20250220（完整字符串）
+_RE_CERT_NO_INTL = re.compile(r'LR[A-Z]\d{6,}', re.IGNORECASE)   # 优先匹配国际格式
+_RE_CERT_NO_CN   = re.compile(r'批签[^\d\n]{0,8}\d{6,}')          # 回退匹配中文格式
 
 # 疫苗名称：Generic Name 下一行（扫描件标准版式）或含"疫苗"的短行
 _RE_VACCINE_GENERIC = re.compile(r'Generic\s*Name\s*\n\s*([^\n]{3,35})')
@@ -353,10 +350,14 @@ def _score_page(text: str) -> tuple[str, dict]:
         # 去掉括号内的亚批号说明，如 "202505020（1-2）" → "202505020"
         fields["batch_no"] = re.sub(r'[（(].*', '', raw).strip() or None
 
-    # ── 批签发号 ─────────────────────────────────────────────
-    m = _RE_CERT_NO.search(text)
+    # ── 批签发号（优先国际格式，保留完整前缀） ──────────────────
+    m = _RE_CERT_NO_INTL.search(text)
     if m:
-        fields["cert_no"] = (m.group(1) or m.group(2) or "").strip() or None
+        fields["cert_no"] = m.group(0).strip()
+    else:
+        m = _RE_CERT_NO_CN.search(text)
+        if m:
+            fields["cert_no"] = m.group(0).strip()
 
     # ── 生产企业 ─────────────────────────────────────────────
     m = _RE_MANUFACTURER_NEXT.search(text)
