@@ -88,23 +88,49 @@ def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
 
 
 # ── 自动识别：首页特征 ────────────────────────────────────────
-# 高置信：页面含以下任意关键词，基本可判定为证明首页
-_HIGH_KEYWORDS = [
+# 高置信关键词分两类：
+#   EXACT  — 直接子串匹配（这些词不会出现在正文句子中）
+#   LINE   — 必须在行首出现（避免被"已获得批签发合格证书"等语句误触发）
+_HIGH_KW_EXACT = [
     "批签发证明",
-    "生物制品批签发",
-    "批签发合格证",
-    "疫苗批签发",
+    "Certificate for the Release of Biological",
     "Lot Release Certificate",
 ]
-
-# 辅助字段正则（用于从首页文本提取关键信息）
-_RE_BATCH_NO      = re.compile(r'批\s*号[：:]\s*([A-Za-z0-9（）()\-]{3,25})')
-_RE_MANUFACTURER  = re.compile(r'生产企业[：:]\s*([^\n]{2,30})')
-_RE_CERT_NO       = re.compile(
-    r'(?:批签发号|签发编号|证书编号|发证编号)[：:]\s*([^\s\n]{3,25})'
+_HIGH_KW_LINE = re.compile(
+    r'^\s*(?:生物制品批签发|批签发合格证|疫苗批签发)',
+    re.MULTILINE,
 )
-# 疫苗名称：取含"疫苗"的最短非空行（排除太长的说明句）
-_RE_VACCINE_LINE  = re.compile(r'^(.{3,35}疫苗[^，。；\n]{0,15})$', re.MULTILINE)
+
+# 批号：支持三种版式
+#   双行版：Lot No. 后换行取批号（国家批签发证明标准版式）
+#   双栏版：批号出现在"收检编号"之前的独立行（部分厂家版式）
+#   单行版：批号：202512057
+_RE_BATCH_NO = re.compile(
+    r'(?:'
+    r'Lot\s*No[.：: ]*\s*\n\s*([A-Za-z0-9]{3,25})'        # 双行版
+    r'|([A-Za-z0-9]{5,20})\s*(?:[（(][^）)\n]+[）)])?\s*\n\s*收检编号'  # 双栏版
+    r'|批\s*号[：:]\s*([A-Za-z0-9（）()\-]{3,25})'          # 单行版
+    r')',
+    re.IGNORECASE,
+)
+
+# 批签发号：LRA20260923 / LRH20250448 / 批签中检20260923 等
+_RE_CERT_NO = re.compile(
+    r'(?:'
+    r'((?:LRA|LRH|LRC|LRB)\d{6,})'            # 国际格式 LRA/LRH...
+    r'|批签[^\d\n]{0,6}(\d{6,})'               # 批签中检/批签鄂检... + 数字
+    r')',
+    re.IGNORECASE,
+)
+
+# 疫苗名称：Generic Name 下一行（扫描件标准版式）或含"疫苗"的短行
+_RE_VACCINE_GENERIC = re.compile(r'Generic\s*Name\s*\n\s*([^\n]{3,35})')
+_RE_VACCINE_LINE    = re.compile(r'^(.{3,35}(?:疫苗|vaccine)[^，。；\n]{0,15})$',
+                                  re.MULTILINE | re.IGNORECASE)
+
+# 生产企业：Manufacturer 下一行（扫描件标准版式）或内联版
+_RE_MANUFACTURER_NEXT = re.compile(r'Manufacturer[：:\s]*\n\s*([^\n]{2,30})')
+_RE_MANUFACTURER      = re.compile(r'生产企业[：:]\s*([^\n]{2,30})')
 
 # ── 日志 ──────────────────────────────────────────────────────
 def _setup_logger() -> logging.Logger:
@@ -319,34 +345,48 @@ def _score_page(text: str) -> tuple[str, dict]:
         "manufacturer": None, "cert_no": None,
     }
 
-    # 提取字段（无论置信度如何都尝试，方便人工核查）
+    # ── 批号 ────────────────────────────────────────────────
     m = _RE_BATCH_NO.search(text)
     if m:
-        fields["batch_no"] = m.group(1).strip()
+        # 三个分组取第一个非空的
+        raw = next((g for g in m.groups() if g), "").strip()
+        # 去掉括号内的亚批号说明，如 "202505020（1-2）" → "202505020"
+        fields["batch_no"] = re.sub(r'[（(].*', '', raw).strip() or None
 
-    m = _RE_MANUFACTURER.search(text)
-    if m:
-        fields["manufacturer"] = m.group(1).strip()
-
+    # ── 批签发号 ─────────────────────────────────────────────
     m = _RE_CERT_NO.search(text)
     if m:
-        fields["cert_no"] = m.group(1).strip()
+        fields["cert_no"] = (m.group(1) or m.group(2) or "").strip() or None
 
-    candidates = _RE_VACCINE_LINE.findall(text)
-    if candidates:
-        # 取最短的候选行（最可能是品名而非长句）
-        fields["vaccine_name"] = min(candidates, key=len).strip()
+    # ── 生产企业 ─────────────────────────────────────────────
+    m = _RE_MANUFACTURER_NEXT.search(text)
+    if not m:
+        m = _RE_MANUFACTURER.search(text)
+    if m:
+        fields["manufacturer"] = m.group(1).strip() or None
+
+    # ── 疫苗名称 ─────────────────────────────────────────────
+    m = _RE_VACCINE_GENERIC.search(text)
+    if m:
+        fields["vaccine_name"] = m.group(1).strip() or None
+    else:
+        candidates = _RE_VACCINE_LINE.findall(text)
+        if candidates:
+            fields["vaccine_name"] = min(candidates, key=len).strip() or None
 
     # ── 评分 ────────────────────────────────────────────────
-    # 高置信：含强特征关键词
-    for kw in _HIGH_KEYWORDS:
+    # 高置信：确切子串 或 行首关键词（区分"已获得批签发合格证书"等正文句子）
+    for kw in _HIGH_KW_EXACT:
         if kw in text:
             return "高", fields
+    if _HIGH_KW_LINE.search(text):
+        return "高", fields
 
-    # 中置信：同时含"批号"和至少一个辅助字段（生产企业 / 疫苗 / 有效期）
-    has_batch = bool(_RE_BATCH_NO.search(text))
-    has_aux   = any(kw in text for kw in ("生产企业", "有效期至", "检验结论", "疫苗"))
-    if has_batch and has_aux:
+    # 中置信：含批签发编号上下文 + 批号 + 辅助字段（三者同时满足）
+    has_release_ctx = bool(re.search(r'\bLR[A-Z]\d{5}', text))  # LRA/LRH/LRG...
+    has_batch       = bool(fields["batch_no"])
+    has_aux         = any(kw in text for kw in ("生产企业", "有效期至", "Manufacturer"))
+    if has_release_ctx and has_batch and has_aux:
         return "中", fields
 
     return "", {}
