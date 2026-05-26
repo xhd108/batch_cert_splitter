@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-批签发大 PDF 拆分工具 v1
+批签发大 PDF 拆分工具 v2
 
 子命令：
   init      初始化 SQLite 数据库
-  template  生成人工填写用的 Excel 索引模板
-  split     按索引表拆分 PDF，写入数据库，生成拆分报告
+  template  生成人工填写用的 Excel 索引模板（v1 流程）
+  detect    自动识别疑似首页，生成复核表（v2 流程）
+  split     按索引/复核表拆分 PDF，写入数据库，生成拆分报告
   list      查看已入库的单证记录
 
-用法示例：
-  python3 tools/batch_cert_splitter.py init
+v2 用法示例：
+  python3 tools/batch_cert_splitter.py detect --pdf 批签发.pdf
+  # 用 Excel 打开生成的复核表，核对/修正后保存
+  python3 tools/batch_cert_splitter.py split --pdf 批签发.pdf --index 批签发_复核表.xlsx
+
+v1 用法示例（人工填写）：
   python3 tools/batch_cert_splitter.py template
-  python3 tools/batch_cert_splitter.py split --pdf 批签发.pdf --index 索引表.xlsx
-  python3 tools/batch_cert_splitter.py list
+  python3 tools/batch_cert_splitter.py split --pdf 批签发.pdf --index 批签发索引模板.xlsx
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -35,6 +40,25 @@ LOG_DIR      = PROJECT_ROOT / "logs"
 
 # 页数不在此区间则标记为待复核
 NORMAL_PAGE_RANGE = (2, 3)
+
+# ── 自动识别：首页特征 ────────────────────────────────────────
+# 高置信：页面含以下任意关键词，基本可判定为证明首页
+_HIGH_KEYWORDS = [
+    "批签发证明",
+    "生物制品批签发",
+    "批签发合格证",
+    "疫苗批签发",
+    "Lot Release Certificate",
+]
+
+# 辅助字段正则（用于从首页文本提取关键信息）
+_RE_BATCH_NO      = re.compile(r'批\s*号[：:]\s*([A-Za-z0-9（）()\-]{3,25})')
+_RE_MANUFACTURER  = re.compile(r'生产企业[：:]\s*([^\n]{2,30})')
+_RE_CERT_NO       = re.compile(
+    r'(?:批签发号|签发编号|证书编号|发证编号)[：:]\s*([^\s\n]{3,25})'
+)
+# 疫苗名称：取含"疫苗"的最短非空行（排除太长的说明句）
+_RE_VACCINE_LINE  = re.compile(r'^(.{3,35}疫苗[^，。；\n]{0,15})$', re.MULTILINE)
 
 # ── 日志 ──────────────────────────────────────────────────────
 def _setup_logger() -> logging.Logger:
@@ -178,14 +202,22 @@ def _read_index_excel(path: Path) -> list[dict]:
         idx = header_map.get(name)
         return row[idx] if idx is not None else None
 
+    _SKIP_VALUES = {"填写说明", "hint", "备注", "图例：", "图例"}
+
     records = []
     for row_num, row in enumerate(rows[1:], start=2):
         batch_no = str(_get(row, "批号") or "").strip()
-        if not batch_no or batch_no.lower() in ("填写说明", "hint", "备注"):
-            continue  # 跳过空行和说明行
+        if not batch_no or batch_no.lower() in _SKIP_VALUES or batch_no.startswith("【"):
+            continue  # 跳过空行、说明行、图例行、占位行
+
+        raw_start = _get(row, "起始页")
+        raw_end   = _get(row, "结束页")
+        if raw_start is None or raw_end is None:
+            log.debug(f"第 {row_num} 行跳过（起止页为空），批号={batch_no!r}")
+            continue
         try:
-            start = int(_get(row, "起始页"))
-            end   = int(_get(row, "结束页"))
+            start = int(raw_start)
+            end   = int(raw_end)
         except (TypeError, ValueError):
             raise ValueError(f"第 {row_num} 行：起始页/结束页必须为整数，批号={batch_no!r}")
         records.append({
@@ -228,6 +260,220 @@ def _validate(records: list[dict], total_pages: int) -> list[str]:
                 errors.append(f"警告：第 {pg} 页未被任何批号覆盖（可能遗漏）")
 
     return errors
+
+
+# ── 自动识别核心 ──────────────────────────────────────────────
+def _score_page(text: str) -> tuple[str, dict]:
+    """
+    对单页文字评分，返回 (置信度, 提取字段)。
+    置信度: '高' | '中' | ''（非首页）
+    """
+    fields: dict[str, str | None] = {
+        "batch_no": None, "vaccine_name": None,
+        "manufacturer": None, "cert_no": None,
+    }
+
+    # 提取字段（无论置信度如何都尝试，方便人工核查）
+    m = _RE_BATCH_NO.search(text)
+    if m:
+        fields["batch_no"] = m.group(1).strip()
+
+    m = _RE_MANUFACTURER.search(text)
+    if m:
+        fields["manufacturer"] = m.group(1).strip()
+
+    m = _RE_CERT_NO.search(text)
+    if m:
+        fields["cert_no"] = m.group(1).strip()
+
+    candidates = _RE_VACCINE_LINE.findall(text)
+    if candidates:
+        # 取最短的候选行（最可能是品名而非长句）
+        fields["vaccine_name"] = min(candidates, key=len).strip()
+
+    # ── 评分 ────────────────────────────────────────────────
+    # 高置信：含强特征关键词
+    for kw in _HIGH_KEYWORDS:
+        if kw in text:
+            return "高", fields
+
+    # 中置信：同时含"批号"和至少一个辅助字段（生产企业 / 疫苗 / 有效期）
+    has_batch = bool(_RE_BATCH_NO.search(text))
+    has_aux   = any(kw in text for kw in ("生产企业", "有效期至", "检验结论", "疫苗"))
+    if has_batch and has_aux:
+        return "中", fields
+
+    return "", {}
+
+
+def _build_detect_index(
+    detections: list[dict], total_pages: int
+) -> tuple[list[dict], list[str]]:
+    """
+    将检测到的疑似首页列表转换为起止页索引，并生成警告信息。
+    detections: [{"page": int, "conf": str, "fields": dict}, ...]
+    返回: (records, warnings)
+    """
+    warnings: list[str] = []
+    records: list[dict] = []
+
+    if not detections:
+        warnings.append("未检测到任何疑似首页，请完全手动填写复核表。")
+        return records, warnings
+
+    # 第 1 页未被识别为首页：说明有前置页面未覆盖
+    if detections[0]["page"] > 1:
+        warnings.append(
+            f"第 1-{detections[0]['page'] - 1} 页未被识别为任何证明首页，"
+            "已在复核表顶部添加【待核查】占位行，请手动确认。"
+        )
+        records.append({
+            "batch_no":     "【待核查】",
+            "vaccine_name": None,
+            "manufacturer": None,
+            "cert_no":      None,
+            "start_page":   1,
+            "end_page":     detections[0]["page"] - 1,
+            "conf":         "手动",
+            "notes":        "自动检测未覆盖，请核查",
+        })
+
+    for i, det in enumerate(detections):
+        end = detections[i + 1]["page"] - 1 if i + 1 < len(detections) else total_pages
+        f   = det["fields"]
+        records.append({
+            "batch_no":     f.get("batch_no") or f"【第{det['page']}页】",
+            "vaccine_name": f.get("vaccine_name"),
+            "manufacturer": f.get("manufacturer"),
+            "cert_no":      f.get("cert_no"),
+            "start_page":   det["page"],
+            "end_page":     end,
+            "conf":         det["conf"],
+            "notes":        "自动识别" if det["conf"] == "高" else "中置信，请核查",
+        })
+
+    return records, warnings
+
+
+def _save_detect_excel(records: list[dict], out_path: Path) -> None:
+    """将检测结果保存为带颜色标注的复核 Excel。"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "批签发复核表"
+
+    # 颜色
+    fill_header = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    fill_high   = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    fill_mid    = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    fill_manual = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+    font_hdr    = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+    center      = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    headers = ["批号", "疫苗名称", "生产企业", "批签发号", "起始页", "结束页", "置信度", "备注"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=col, value=h)
+        c.fill      = fill_header
+        c.font      = font_hdr
+        c.alignment = center
+
+    _CONF_FILL = {"高": fill_high, "中": fill_mid, "手动": fill_manual}
+
+    for row_idx, r in enumerate(records, 2):
+        row_data = [
+            r["batch_no"], r["vaccine_name"], r["manufacturer"], r["cert_no"],
+            r["start_page"], r["end_page"], r["conf"], r["notes"],
+        ]
+        fill = _CONF_FILL.get(r["conf"], fill_manual)
+        for col, val in enumerate(row_data, 1):
+            c = ws.cell(row=row_idx, column=col, value=val)
+            c.fill      = fill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 28
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 18
+    ws.column_dimensions["E"].width = 10
+    ws.column_dimensions["F"].width = 10
+    ws.column_dimensions["G"].width = 10
+    ws.column_dimensions["H"].width = 22
+    ws.row_dimensions[1].height = 22
+
+    # 图例说明行（最后）
+    legend_row = len(records) + 3
+    ws.cell(row=legend_row, column=1,
+            value="图例：").font = Font(bold=True)
+    for col, (label, fill) in enumerate([
+        ("高置信（自动识别可靠）", fill_high),
+        ("中置信（建议核查）", fill_mid),
+        ("手动（需人工填写）", fill_manual),
+    ], 2):
+        c = ws.cell(row=legend_row, column=col, value=label)
+        c.fill = fill
+
+    wb.save(out_path)
+
+
+def cmd_detect(args: argparse.Namespace) -> None:
+    """v2 自动识别疑似首页，生成人工复核表。"""
+    pdf_path = Path(args.pdf).resolve()
+    if not pdf_path.exists():
+        log.error(f"PDF 文件不存在: {pdf_path}")
+        sys.exit(1)
+
+    out_path = Path(args.out) if args.out else pdf_path.parent / f"{pdf_path.stem}_复核表.xlsx"
+
+    log.info(f"打开 PDF: {pdf_path}")
+    src = fitz.open(str(pdf_path))
+    total_pages = len(src)
+    log.info(f"PDF 总页数: {total_pages}")
+
+    # ── 逐页扫描 ────────────────────────────────────────────
+    detections: list[dict] = []
+    log.info("开始扫描各页文字……")
+    for i in range(total_pages):
+        text = src[i].get_text()
+        conf, fields = _score_page(text)
+        status = f"[{conf}]" if conf else "  -  "
+        log.debug(f"  第{i+1:>3}页  {status}")
+        if conf:
+            log.info(f"  疑似首页 → 第 {i+1} 页  置信度={conf}  批号={fields.get('batch_no') or '未提取'}")
+            detections.append({"page": i + 1, "conf": conf, "fields": fields})
+
+    # ── 构建索引 ────────────────────────────────────────────
+    records, warnings = _build_detect_index(detections, total_pages)
+    for w in warnings:
+        log.warning(w)
+
+    # ── 保存复核表 ───────────────────────────────────────────
+    _save_detect_excel(records, out_path)
+
+    # ── 控制台摘要 ───────────────────────────────────────────
+    high   = sum(1 for r in records if r["conf"] == "高")
+    mid    = sum(1 for r in records if r["conf"] == "中")
+    manual = sum(1 for r in records if r["conf"] == "手动")
+
+    sep = "─" * 60
+    print(f"\n{sep}")
+    print(f"  自动识别报告")
+    print(sep)
+    print(f"  PDF 总页数  : {total_pages}")
+    print(f"  检测到证明  : {len(records)} 份")
+    print(f"  高置信 🟢   : {high}  （自动识别可靠）")
+    print(f"  中置信 🟡   : {mid}  （建议人工核查）")
+    print(f"  手动   🔴   : {manual}  （未检测，需手工填写）")
+    print(sep)
+    print(f"  {'批号':<22} {'页':<8} {'页数':>4}  置信度")
+    print(f"  {'─'*22} {'─'*8} {'─'*4}  ───")
+    for r in records:
+        icon = {"高": "🟢", "中": "🟡", "手动": "🔴"}.get(r["conf"], "")
+        page_str = f"{r['start_page']}-{r['end_page']}"
+        pg = r["end_page"] - r["start_page"] + 1
+        print(f"  {r['batch_no']:<22} {page_str:<8} {pg:>4}  {icon} {r['conf']}")
+    print(sep)
+    print(f"\n复核表已保存: {out_path}")
+    print("请用 Excel 打开，核对后直接运行：")
+    print(f"  python3 tools/batch_cert_splitter.py split --pdf {pdf_path.name} --index {out_path.name}\n")
 
 
 # ── 核心拆分 ─────────────────────────────────────────────────
@@ -394,19 +640,23 @@ def cmd_list(args: argparse.Namespace) -> None:
 # ── CLI ──────────────────────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="批签发大PDF拆分工具 v1",
+        description="批签发大PDF拆分工具 v2",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("init", help="初始化 SQLite 数据库")
 
-    tp = sub.add_parser("template", help="生成 Excel 索引模板")
+    tp = sub.add_parser("template", help="生成 Excel 索引模板（v1 手动流程）")
     tp.add_argument("--out", default="批签发索引模板.xlsx", help="输出文件名")
 
-    sp = sub.add_parser("split", help="按索引表拆分 PDF")
+    dp = sub.add_parser("detect", help="自动识别疑似首页，生成人工复核表（v2 流程）")
+    dp.add_argument("--pdf", required=True, help="大 PDF 路径")
+    dp.add_argument("--out", default=None,  help="复核表输出路径（默认 <pdf名>_复核表.xlsx）")
+
+    sp = sub.add_parser("split", help="按索引/复核表拆分 PDF，写入数据库")
     sp.add_argument("--pdf",     required=True, help="大 PDF 路径")
-    sp.add_argument("--index",   required=True, help="已填写的 Excel 索引表路径")
+    sp.add_argument("--index",   required=True, help="已填写/复核的 Excel 表路径")
     sp.add_argument("--out-dir", default=None,  help="拆分 PDF 输出目录（默认 output/<pdf名>/）")
 
     lp = sub.add_parser("list", help="查看已入库的单证记录")
@@ -418,6 +668,8 @@ def main() -> None:
         init_db()
     elif args.cmd == "template":
         cmd_template(args)
+    elif args.cmd == "detect":
+        cmd_detect(args)
     elif args.cmd == "split":
         cmd_split(args)
     elif args.cmd == "list":
