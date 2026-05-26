@@ -41,6 +41,52 @@ LOG_DIR      = PROJECT_ROOT / "logs"
 # 页数不在此区间则标记为待复核
 NORMAL_PAGE_RANGE = (2, 3)
 
+# ── OCR：macOS Vision 框架 ────────────────────────────────────
+def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
+    """
+    用 macOS Vision 框架对 PDF 单页进行 OCR，返回识别文字字符串。
+    dpi：渲染分辨率，200 足够，300 更准确但较慢。
+    """
+    try:
+        import Vision
+        import Quartz
+    except ImportError:
+        raise RuntimeError(
+            "macOS Vision 框架未安装。请运行：\n"
+            "  pip3 install pyobjc-framework-Vision pyobjc-framework-Quartz"
+        )
+
+    import tempfile, os
+
+    # 渲染为 PNG（高分辨率提升 OCR 准确率）
+    scale = dpi / 72
+    mat = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)  # 灰度减小文件体积
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp_path = f.name
+    try:
+        pix.save(tmp_path)
+
+        url = Quartz.NSURL.fileURLWithPath_(tmp_path)
+        req = Vision.VNRecognizeTextRequest.alloc().init()
+        req.setRecognitionLanguages_(["zh-Hans", "zh-Hant", "en-US"])
+        req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        req.setUsesLanguageCorrection_(False)
+
+        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(url, None)
+        handler.performRequests_error_([req], None)
+
+        lines = [
+            obs.topCandidates_(1)[0].string()
+            for obs in (req.results() or [])
+            if obs.topCandidates_(1)
+        ]
+        return "\n".join(lines)
+    finally:
+        os.unlink(tmp_path)
+
+
 # ── 自动识别：首页特征 ────────────────────────────────────────
 # 高置信：页面含以下任意关键词，基本可判定为证明首页
 _HIGH_KEYWORDS = [
@@ -422,20 +468,41 @@ def cmd_detect(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     out_path = Path(args.out) if args.out else pdf_path.parent / f"{pdf_path.stem}_复核表.xlsx"
+    use_ocr  = getattr(args, "ocr", False)
+    dpi      = getattr(args, "dpi", 200)
 
     log.info(f"打开 PDF: {pdf_path}")
     src = fitz.open(str(pdf_path))
     total_pages = len(src)
     log.info(f"PDF 总页数: {total_pages}")
 
+    if use_ocr:
+        log.info(f"OCR 模式（macOS Vision，DPI={dpi}）——扫描版 PDF")
+    else:
+        # 自动检测：若第1页文字量极少则切换 OCR
+        sample = src[0].get_text().strip()
+        if len(sample) < 10:
+            log.warning("第1页提取文字过少（可能为扫描件），自动启用 OCR 模式")
+            use_ocr = True
+        else:
+            log.info("文字提取模式——数字 PDF")
+
     # ── 逐页扫描 ────────────────────────────────────────────
     detections: list[dict] = []
     log.info("开始扫描各页文字……")
     for i in range(total_pages):
-        text = src[i].get_text()
+        if use_ocr:
+            try:
+                text = _ocr_page_vision(src[i], dpi=dpi)
+            except RuntimeError as e:
+                log.error(str(e))
+                sys.exit(1)
+        else:
+            text = src[i].get_text()
+
         conf, fields = _score_page(text)
         status = f"[{conf}]" if conf else "  -  "
-        log.debug(f"  第{i+1:>3}页  {status}")
+        log.debug(f"  第{i+1:>3}页  {status}  {text[:40].replace(chr(10),' ')}")
         if conf:
             log.info(f"  疑似首页 → 第 {i+1} 页  置信度={conf}  批号={fields.get('batch_no') or '未提取'}")
             detections.append({"page": i + 1, "conf": conf, "fields": fields})
@@ -653,6 +720,10 @@ def main() -> None:
     dp = sub.add_parser("detect", help="自动识别疑似首页，生成人工复核表（v2 流程）")
     dp.add_argument("--pdf", required=True, help="大 PDF 路径")
     dp.add_argument("--out", default=None,  help="复核表输出路径（默认 <pdf名>_复核表.xlsx）")
+    dp.add_argument("--ocr", action="store_true",
+                    help="强制启用 OCR（扫描版 PDF 必须加此参数，或程序自动检测后启用）")
+    dp.add_argument("--dpi", type=int, default=200,
+                    help="OCR 渲染分辨率，默认 200；扫描不清晰时可提至 300")
 
     sp = sub.add_parser("split", help="按索引/复核表拆分 PDF，写入数据库")
     sp.add_argument("--pdf",     required=True, help="大 PDF 路径")
