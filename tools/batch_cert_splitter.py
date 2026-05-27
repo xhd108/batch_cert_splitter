@@ -394,8 +394,7 @@ def _score_page(text: str) -> tuple[str, dict]:
     if m:
         # 三个分组取第一个非空的
         raw = next((g for g in m.groups() if g), "").strip()
-        # 去掉括号内的亚批号说明，如 "202505020（1-2）" → "202505020"
-        fields["batch_no"] = re.sub(r'[（(].*', '', raw).strip() or None
+        fields["batch_no"] = raw or None
 
     # ── 批签发号（优先国际格式，保留完整前缀） ──────────────────
     m = _RE_CERT_NO_INTL.search(text)
