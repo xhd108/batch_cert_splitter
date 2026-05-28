@@ -38,8 +38,8 @@ DB_PATH      = PROJECT_ROOT / "db" / "cert.db"
 OUTPUT_DIR   = PROJECT_ROOT / "output"
 LOG_DIR      = PROJECT_ROOT / "logs"
 
-# 页数不在此区间则标记为待复核
-NORMAL_PAGE_RANGE = (2, 3)
+# 页数不在此区间则标记为待复核（4页证明属正常，扩展上限）
+NORMAL_PAGE_RANGE = (2, 4)
 
 # ── OCR：macOS Vision 框架 ────────────────────────────────────
 def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
@@ -145,18 +145,21 @@ _HIGH_KW_LINE = re.compile(
     re.MULTILINE,
 )
 
-# 批号：支持三种版式
-#   双行版：Lot No. 后换行取批号（国家批签发证明标准版式）
+# 批号：支持五种版式
+#   双行版：Lot No. 后换行取批号（国家批签发证明标准版式，含 Lot:No. OCR变形）
+#   逆序版：批号值出现在 Lot No./批号 标签之前（OCR按列读序时）
 #   双栏版：批号出现在"收检编号"之前的独立行（部分厂家版式）
+#   产品批号版：产品批号\n<值>（企业报告格式）
 #   单行版：批号：202512057
 # 括号后缀统一纳入捕获：202506022（1-2）/ 202506022（-1，-2，-3）/ 202506022（1～2）
 _BATCH_SUFFIX = r'(?:[（(][^）)\n]{1,30}[）)])?'   # 可选括号后缀
 
 _RE_BATCH_NO = re.compile(
     r'(?:'
-    r'Lot\s*No[.：: ]*\s*\n\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'        # 双行版
-    r'|([A-Za-z0-9]{5,20}' + _BATCH_SUFFIX + r')\s*\n\s*收检编号'                # 双栏版
-    r'|批\s*号[：:]\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'                 # 单行版
+    r'(?:Lot[:\s]*No|产品批号)[.：: ]*\s*\n\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'    # 双行版/产品批号版
+    r'|([0-9][A-Za-z0-9]{4,11}' + _BATCH_SUFFIX + r')\s*\n\s*Lot[:\s]*No'                    # 逆序版（值在Lot No.前；≤12字符防收检编号误捕获）
+    r'|([A-Za-z0-9]{5,20}' + _BATCH_SUFFIX + r')\s*\n\s*收检编号'                            # 双栏版
+    r'|批\s*号[：:]\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'                             # 单行版
     r')',
     re.IGNORECASE,
 )
@@ -379,11 +382,25 @@ def _validate(records: list[dict], total_pages: int) -> list[str]:
 
 
 # ── 自动识别核心 ──────────────────────────────────────────────
+# 非国家批签发证明的企业报告关键词——命中则降为非首页
+_COMPANY_REPORT_KW = re.compile(
+    r'(?:产品质量报告|成品检验报告|成品检定报告|Certificate\s+of\s+Analysis'
+    r'|药品生产许可证|产品检验报告)',
+)
+
+
+def _preprocess_text(text: str) -> str:
+    """统一OCR常见误识：© → C（OCR将©字符误识为版权符号）"""
+    return text.replace('©', 'C').replace('＀', '')
+
+
 def _score_page(text: str) -> tuple[str, dict]:
     """
     对单页文字评分，返回 (置信度, 提取字段)。
     置信度: '高' | '中' | ''（非首页）
     """
+    text = _preprocess_text(text)
+
     fields: dict[str, str | None] = {
         "batch_no": None, "vaccine_name": None,
         "manufacturer": None, "cert_no": None,
@@ -392,8 +409,8 @@ def _score_page(text: str) -> tuple[str, dict]:
     # ── 批号 ────────────────────────────────────────────────
     m = _RE_BATCH_NO.search(text)
     if m:
-        # 三个分组取第一个非空的
         raw = next((g for g in m.groups() if g), "").strip()
+        raw = raw.rstrip('.')   # 去除 OCR 误产生的尾部句点：202409009. → 202409009
         fields["batch_no"] = raw or None
 
     # ── 批签发号（优先国际格式，保留完整前缀） ──────────────────
@@ -422,12 +439,16 @@ def _score_page(text: str) -> tuple[str, dict]:
             fields["vaccine_name"] = min(candidates, key=len).strip() or None
 
     # ── 评分 ────────────────────────────────────────────────
-    # 高置信：确切子串 或 行首关键词（区分"已获得批签发合格证书"等正文句子）
+    # 高置信优先：含国家批签发证明确切标题，不受企业报告过滤影响
     for kw in _HIGH_KW_EXACT:
         if kw in text:
             return "高", fields
     if _HIGH_KW_LINE.search(text):
         return "高", fields
+
+    # 企业内部报告页（检验报告/生产许可证等）排除在外，不纳入中置信
+    if _COMPANY_REPORT_KW.search(text):
+        return "", {}
 
     # 中置信：含批签发编号上下文 + 批号 + 辅助字段（三者同时满足）
     has_release_ctx = bool(re.search(r'\bLR[A-Z]\d{5}', text))  # LRA/LRH/LRG...
