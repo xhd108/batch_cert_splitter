@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>批签发证明拆分工具</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 顶部导航 -->
+<header class="navbar">
+  <div class="navbar-inner">
+    <span class="navbar-title">批签发证明拆分工具</span>
+    <button class="btn-ghost" id="btn-history">历史记录</button>
+  </div>
+</header>
+
+<!-- 主体 -->
+<main class="container">
+
+  <!-- ① 上传区 -->
+  <section class="card" id="section-upload">
+    <h2 class="section-title">第一步：上传批签发 PDF</h2>
+    <div class="upload-zone" id="drop-zone">
+      <div class="upload-icon">📄</div>
+      <div class="upload-text">拖拽 PDF 文件到此处，或点击选择文件</div>
+      <div class="upload-hint">支持扫描版大 PDF，自动识别每份证明的起止页</div>
+      <input type="file" id="file-input" accept=".pdf" hidden>
+    </div>
+    <div class="upload-options">
+      <label class="option-label">
+        <input type="checkbox" id="opt-no-qr">
+        离线模式（不联网，仅用 OCR 识别）
+      </label>
+      <label class="option-label">
+        高分辨率 OCR（扫描模糊时勾选，速度较慢）
+        <input type="checkbox" id="opt-hires">
+      </label>
+    </div>
+  </section>
+
+  <!-- ② 进度条 -->
+  <section class="card hidden" id="section-progress">
+    <h2 class="section-title">识别中…</h2>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="progress-info">
+      <span id="progress-text">正在扫描第 0 / 0 页</span>
+      <span id="progress-source"></span>
+    </div>
+    <div class="progress-log" id="progress-log"></div>
+  </section>
+
+  <!-- ③ 识别结果表 -->
+  <section class="card hidden" id="section-result">
+    <div class="result-header">
+      <h2 class="section-title">第二步：确认识别结果</h2>
+      <div class="result-meta" id="result-meta"></div>
+    </div>
+    <div class="legend">
+      <span class="badge badge-qr">■</span> 二维码（国家药监局数据，准确）
+      <span class="badge badge-high">■</span> OCR 高置信
+      <span class="badge badge-mid">■</span> OCR 中置信（建议核查）
+      <span class="badge badge-manual">■</span> 未识别（请手动填写）
+    </div>
+    <div class="warnings" id="warnings-box"></div>
+    <div class="table-wrap">
+      <table class="result-table" id="result-table">
+        <thead>
+          <tr>
+            <th style="width:36px">#</th>
+            <th style="min-width:160px">批号 *</th>
+            <th style="min-width:160px">疫苗名称</th>
+            <th style="min-width:130px">生产企业</th>
+            <th style="min-width:130px">批签发号</th>
+            <th style="width:70px">起始页 *</th>
+            <th style="width:70px">结束页 *</th>
+            <th style="width:54px">页数</th>
+            <th style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="result-tbody"></tbody>
+      </table>
+    </div>
+    <div class="table-actions">
+      <button class="btn-secondary" id="btn-add-row">＋ 添加行</button>
+      <button class="btn-primary" id="btn-split">确认并拆分 ▶</button>
+    </div>
+  </section>
+
+  <!-- ④ 拆分结果 -->
+  <section class="card hidden" id="section-done">
+    <h2 class="section-title">✅ 拆分完成</h2>
+    <div class="done-summary" id="done-summary"></div>
+    <div class="done-actions">
+      <a class="btn-primary" id="btn-download" href="#">下载拆分结果（ZIP）</a>
+      <button class="btn-secondary" id="btn-restart">处理新文件</button>
+    </div>
+    <table class="result-table done-table" id="done-table">
+      <thead><tr><th>批号</th><th>页码</th><th>页数</th><th>状态</th></tr></thead>
+      <tbody id="done-tbody"></tbody>
+    </table>
+  </section>
+
+</main>
+
+<!-- 历史记录抽屉 -->
+<div class="drawer-overlay hidden" id="drawer-overlay"></div>
+<aside class="drawer hidden" id="drawer-history">
+  <div class="drawer-header">
+    <span>历史记录</span>
+    <button class="btn-ghost" id="btn-close-history">✕</button>
+  </div>
+  <div class="drawer-body">
+    <table class="result-table" id="history-table">
+      <thead><tr><th>批号</th><th>疫苗名称</th><th>批签发号</th><th>页数</th><th>状态</th><th>时间</th></tr></thead>
+      <tbody id="history-tbody"></tbody>
+    </table>
+  </div>
+</aside>
+
+<!-- Toast 提示 -->
+<div class="toast hidden" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
