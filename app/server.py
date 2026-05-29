@@ -20,7 +20,12 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import batch_cert_splitter as core
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+if getattr(sys, "frozen", False):
+    _STATIC_DIR = Path(sys._MEIPASS) / "static"  # type: ignore[attr-defined]
+else:
+    _STATIC_DIR = Path(__file__).parent / "static"
+
+app = Flask(__name__, static_folder=str(_STATIC_DIR), static_url_path="")
 
 # 上传文件临时目录
 WORK_DIR = Path(tempfile.gettempdir()) / "cert_splitter_web"

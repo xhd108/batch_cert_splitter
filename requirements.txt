@@ -1,0 +1,18 @@
+# 核心依赖（所有平台）
+flask>=3.0,<4.0
+pymupdf>=1.24,<2.0
+openpyxl>=3.1,<4.0
+requests>=2.32,<3.0
+
+# QR 解码（可选，离线模式不需要）
+# zxing-cpp 完整支持 ECI 编码（国家药监局 QR 码），优先使用
+zxing-cpp>=2.2,<4.0
+# cv2 作为兜底（对不含 ECI 的 QR 码仍有效）
+opencv-python-headless>=4.9,<5.0
+
+# OCR — Windows / Linux（macOS 用系统 Vision 框架，不需要此包）
+pytesseract>=0.3.13,<1.0
+Pillow>=10.0,<12.0
+
+# 打包工具（仅开发环境）
+pyinstaller>=6.5,<7.0

@@ -1,0 +1,164 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"          # 推送 vX.Y.Z tag 时触发
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  VERSION: ${{ github.ref_name }}
+
+jobs:
+  # ── macOS arm64 (Apple Silicon) ─────────────────────────────
+  build-macos-arm64:
+    runs-on: macos-14   # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          pip install flask pymupdf openpyxl requests \
+                      zxing-cpp opencv-python-headless pyinstaller \
+                      pyobjc-framework-Vision pyobjc-framework-Quartz
+
+      - name: 安装 create-dmg
+        run: brew install create-dmg
+
+      - name: 打包
+        run: bash build/macos/build_macos.sh
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/*.dmg
+
+  # ── macOS x86_64 (Intel) ────────────────────────────────────
+  build-macos-x64:
+    runs-on: macos-13   # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          pip install flask pymupdf openpyxl requests \
+                      zxing-cpp opencv-python-headless pyinstaller \
+                      pyobjc-framework-Vision pyobjc-framework-Quartz
+
+      - name: 安装 create-dmg
+        run: brew install create-dmg
+
+      - name: 打包
+        run: bash build/macos/build_macos.sh
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: dist/*.dmg
+
+  # ── Windows x64 ─────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 Tesseract
+        run: |
+          choco install tesseract --params "/Languages:chi_sim" -y
+
+      - name: 安装依赖
+        run: |
+          pip install flask pymupdf openpyxl requests `
+                      zxing-cpp opencv-python-headless pyinstaller `
+                      pytesseract pillow
+
+      - name: 安装 Inno Setup
+        run: choco install innosetup -y
+
+      - name: 打包
+        run: .\build\windows\build_windows.bat
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/*.exe
+
+  # ── Kylin / UOS (aarch64 + x86_64) ─────────────────────────
+  build-linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 QEMU（aarch64 交叉编译）
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: 打包（Docker）
+        run: |
+          ARCH=${{ matrix.arch }}
+          IMAGE="arm64v8/python:3.11-slim"
+          [ "$ARCH" = "x86_64" ] && IMAGE="python:3.11-slim"
+          docker run --rm --platform linux/${ARCH/x86_64/amd64} \
+            -v "$PWD:/app" -w /app \
+            "$IMAGE" bash build/linux/build_linux.sh
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.deb
+
+  # ── 发布 GitHub Release ──────────────────────────────────────
+  release:
+    needs: [build-macos-arm64, build-macos-x64, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载所有产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: 生成 SHA256
+        run: |
+          cd release_assets
+          sha256sum * > SHA256SUMS.txt
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release_assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

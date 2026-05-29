@@ -32,11 +32,19 @@ import fitz  # PyMuPDF
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 
-# ── 项目根目录（tools/ 的上级） ───────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH      = PROJECT_ROOT / "db" / "cert.db"
-OUTPUT_DIR   = PROJECT_ROOT / "output"
-LOG_DIR      = PROJECT_ROOT / "logs"
+# ── 数据根目录（兼容 PyInstaller 打包环境） ──────────────────────
+import os as _os
+_env_data = _os.environ.get("CERT_SPLITTER_DATA")
+if _env_data:
+    DATA_ROOT = Path(_env_data)
+elif getattr(sys, "frozen", False):
+    DATA_ROOT = Path.home() / ".cert_splitter"
+else:
+    DATA_ROOT = Path(__file__).resolve().parent.parent
+
+DB_PATH    = DATA_ROOT / "db" / "cert.db"
+OUTPUT_DIR = DATA_ROOT / "output"
+LOG_DIR    = DATA_ROOT / "logs"
 
 # 页数不在此区间则标记为待复核（4页证明属正常，扩展上限）
 NORMAL_PAGE_RANGE = (2, 4)
@@ -135,11 +143,10 @@ def _ocr_page(page: "fitz.Page", dpi: int = 200) -> str:
 def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
     """
     从 PDF 页面解码二维码，返回解码内容字符串，失败返回 None。
-    依赖：pip3 install opencv-python（或 opencv-python-headless）
-    scale=3.0 约 216 DPI，对扫描件效果最佳。
+    优先使用 zxing-cpp（支持 ECI 编码，国家药监局 QR 码必须），
+    cv2 作为兜底。
     """
     try:
-        import cv2
         import numpy as np
     except ImportError:
         return None
@@ -147,17 +154,34 @@ def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
     mat = fitz.Matrix(scale, scale)
     pix = page.get_pixmap(matrix=mat)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-    if pix.n == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    detector = cv2.QRCodeDetector()
-    # 三次尝试：原图 → 灰度 → 锐化
-    kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-    for src in [img, gray, cv2.filter2D(gray, -1, kernel)]:
-        data, _, _ = detector.detectAndDecode(src)
-        if data:
-            return data
+    # ── 首选：zxing-cpp（完整支持 ECI/UTF-8 编码的 QR 码） ───────
+    try:
+        import zxingcpp
+        results = zxingcpp.read_barcodes(img)
+        for r in results:
+            if r.format == zxingcpp.BarcodeFormat.QRCode and r.text:
+                return r.text
+    except Exception:
+        pass
+
+    # ── 兜底：cv2（不支持 ECI，但保留以防 zxing-cpp 未安装） ──────
+    try:
+        import cv2
+        if pix.n == 4:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+        else:
+            img_rgb = img
+        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        detector = cv2.QRCodeDetector()
+        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        for src in [img_rgb, gray, cv2.filter2D(gray, -1, kernel)]:
+            data, _, _ = detector.detectAndDecode(src)
+            if data:
+                return data
+    except Exception:
+        pass
+
     return None
 
 
