@@ -131,6 +131,82 @@ def _ocr_page(page: "fitz.Page", dpi: int = 200) -> str:
         return _ocr_page_tesseract(page, dpi)
 
 
+# ── 二维码 + 国家药监局 API ───────────────────────────────────
+def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
+    """
+    从 PDF 页面解码二维码，返回解码内容字符串，失败返回 None。
+    依赖：pip3 install opencv-python（或 opencv-python-headless）
+    scale=3.0 约 216 DPI，对扫描件效果最佳。
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    mat = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=mat)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    detector = cv2.QRCodeDetector()
+    # 三次尝试：原图 → 灰度 → 锐化
+    kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+    for src in [img, gray, cv2.filter2D(gray, -1, kernel)]:
+        data, _, _ = detector.detectAndDecode(src)
+        if data:
+            return data
+    return None
+
+
+def _fetch_nmpa_cert(qr_url: str, timeout: int = 8) -> dict | None:
+    """
+    调用国家药监局验证 API，解析返回的 HTML 中嵌入的 JSON，
+    提取批号、批签发号、疫苗名称、生产企业。
+    返回 None 表示网络失败或解析失败。
+    """
+    import urllib.request, json as _json
+
+    try:
+        req = urllib.request.Request(
+            qr_url, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    # HTML 中嵌入：var Certificate = '{...}';
+    m = re.search(r"var Certificate = '(\{.*?\})';", html, re.DOTALL)
+    if not m:
+        return None
+    try:
+        data = _json.loads(m.group(1))
+        items = data.get("data", {}).get("dataList", [])
+        if not items:
+            return None
+        cert = items[0]
+        surface = {s["name"]: s["value"] for s in cert.get("surface", [])}
+
+        def _get(*keys):
+            for k in keys:
+                v = surface.get(k, "").strip()
+                if v:
+                    return v
+            return None
+
+        return {
+            "batch_no":     _get("批号(Lot No.)", "批号"),
+            "cert_no":      _get("Certificate No.") or cert.get("certificateNumber", "").strip() or None,
+            "vaccine_name": _get("产品名称(Generic Name)", "产品名称"),
+            "manufacturer": _get("生产企业(Manufacturer)", "生产企业"),
+        }
+    except Exception:
+        return None
+
+
 # ── 自动识别：首页特征 ────────────────────────────────────────
 # 高置信关键词分两类：
 #   EXACT  — 直接子串匹配（这些词不会出现在正文句子中）
@@ -585,6 +661,15 @@ def cmd_detect(args: argparse.Namespace) -> None:
     log.info(f"PDF 总页数: {total_pages}")
 
     engine = "macOS Vision" if sys.platform == "darwin" else "Tesseract"
+    use_qr = not getattr(args, "no_qr", False)   # 默认开启二维码模式
+    if use_qr:
+        try:
+            import cv2  # noqa: F401
+            log.info("二维码模式已启用（需联网调用国家药监局 API）")
+        except ImportError:
+            log.warning("opencv-python 未安装，二维码模式不可用，将仅使用 OCR")
+            use_qr = False
+
     if use_ocr:
         log.info(f"OCR 模式（{engine}，DPI={dpi}）——扫描版 PDF")
     else:
@@ -598,22 +683,40 @@ def cmd_detect(args: argparse.Namespace) -> None:
 
     # ── 逐页扫描 ────────────────────────────────────────────
     detections: list[dict] = []
-    log.info("开始扫描各页文字……")
+    qr_hits = 0
+    log.info("开始扫描各页……")
     for i in range(total_pages):
+        page = src[i]
+
+        # ── 优先尝试二维码 ──────────────────────────────────
+        if use_qr:
+            qr_content = _decode_qr_page(page)
+            if qr_content and "nmpa.gov.cn" in qr_content:
+                fields = _fetch_nmpa_cert(qr_content)
+                if fields and fields.get("batch_no"):
+                    qr_hits += 1
+                    log.info(
+                        f"  QR ✓ 第 {i+1} 页  批号={fields['batch_no']}  "
+                        f"批签发号={fields.get('cert_no') or '—'}"
+                    )
+                    detections.append({"page": i + 1, "conf": "高", "fields": fields})
+                    continue   # 不再做 OCR
+
+        # ── 回退到 OCR / 文字提取 ──────────────────────────
         if use_ocr:
             try:
-                text = _ocr_page(src[i], dpi=dpi)
+                text = _ocr_page(page, dpi=dpi)
             except RuntimeError as e:
                 log.error(str(e))
                 sys.exit(1)
         else:
-            text = src[i].get_text()
+            text = page.get_text()
 
         conf, fields = _score_page(text)
         status = f"[{conf}]" if conf else "  -  "
         log.debug(f"  第{i+1:>3}页  {status}  {text[:40].replace(chr(10),' ')}")
         if conf:
-            log.info(f"  疑似首页 → 第 {i+1} 页  置信度={conf}  批号={fields.get('batch_no') or '未提取'}")
+            log.info(f"  OCR 第 {i+1} 页  置信度={conf}  批号={fields.get('batch_no') or '未提取'}")
             detections.append({"page": i + 1, "conf": conf, "fields": fields})
 
     # ── 构建索引 ────────────────────────────────────────────
@@ -635,6 +738,8 @@ def cmd_detect(args: argparse.Namespace) -> None:
     print(sep)
     print(f"  PDF 总页数  : {total_pages}")
     print(f"  检测到证明  : {len(records)} 份")
+    if use_qr:
+        print(f"  二维码命中  : {qr_hits}  （字段来自国家药监局）")
     print(f"  高置信 🟢   : {high}  （自动识别可靠）")
     print(f"  中置信 🟡   : {mid}  （建议人工核查）")
     print(f"  手动   🔴   : {manual}  （未检测，需手工填写）")
@@ -833,6 +938,8 @@ def main() -> None:
                     help="强制启用 OCR（扫描版 PDF 必须加此参数，或程序自动检测后启用）")
     dp.add_argument("--dpi", type=int, default=200,
                     help="OCR 渲染分辨率，默认 200；扫描不清晰时可提至 300")
+    dp.add_argument("--no-qr", action="store_true",
+                    help="禁用二维码模式（离线环境或不需要联网时使用）")
 
     sp = sub.add_parser("split", help="按索引/复核表拆分 PDF，写入数据库")
     sp.add_argument("--pdf",     required=True, help="大 PDF 路径")
