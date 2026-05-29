@@ -50,10 +50,58 @@ LOG_DIR    = DATA_ROOT / "logs"
 NORMAL_PAGE_RANGE = (2, 4)
 
 # ── OCR：macOS Vision 框架 ────────────────────────────────────
-def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
+def _dewarp_image(img: "np.ndarray") -> "np.ndarray | None":
+    """
+    检测文档边界四边形，应用透视变换矫正拍照倾斜/弯曲。
+    成功返回矫正后 RGB 图像，无法检测四边形时返回 None。
+    适用于手机扫描件（CamScanner 等）透视畸变校正。
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if img.ndim == 3 else img
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = gray.shape
+    best, best_area = None, 0
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < w * h * 0.1:
+            continue
+        approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+        if len(approx) == 4 and area > best_area:
+            best_area, best = area, approx
+
+    if best is None:
+        return None
+
+    pts = best.reshape(4, 2).astype(np.float32)
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).ravel()
+    tl, br = pts[s.argmin()], pts[s.argmax()]
+    tr, bl = pts[d.argmin()], pts[d.argmax()]
+    src = np.array([tl, tr, br, bl], dtype=np.float32)
+
+    w_out = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+    h_out = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+    if w_out < 100 or h_out < 100:
+        return None
+
+    dst = np.array([[0, 0], [w_out-1, 0], [w_out-1, h_out-1], [0, h_out-1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    return cv2.warpPerspective(img, M, (w_out, h_out))
+
+
+def _ocr_page_vision(page: "fitz.Page", dpi: int = 200,
+                     img: "np.ndarray | None" = None) -> str:
     """
     用 macOS Vision 框架对 PDF 单页进行 OCR，返回识别文字字符串。
-    dpi：渲染分辨率，200 足够，300 更准确但较慢。
+    img：若提供预渲染（如已矫正的）图像则直接使用，否则从 page 渲染。
     """
     try:
         import Vision
@@ -66,15 +114,16 @@ def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
 
     import tempfile, os
 
-    # 渲染为 PNG（高分辨率提升 OCR 准确率）
-    scale = dpi / 72
-    mat = fitz.Matrix(scale, scale)
-    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)  # 灰度减小文件体积
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         tmp_path = f.name
     try:
-        pix.save(tmp_path)
+        if img is not None:
+            from PIL import Image as _PILImage
+            _PILImage.fromarray(img).save(tmp_path)
+        else:
+            scale = dpi / 72
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY)
+            pix.save(tmp_path)
 
         url = Quartz.NSURL.fileURLWithPath_(tmp_path)
         req = Vision.VNRecognizeTextRequest.alloc().init()
@@ -96,12 +145,11 @@ def _ocr_page_vision(page: "fitz.Page", dpi: int = 200) -> str:
 
 
 # ── OCR：Linux / 麒麟 Tesseract ──────────────────────────────
-def _ocr_page_tesseract(page: "fitz.Page", dpi: int = 200) -> str:
+def _ocr_page_tesseract(page: "fitz.Page", dpi: int = 200,
+                        img: "np.ndarray | None" = None) -> str:
     """
     用 Tesseract OCR 对 PDF 单页进行识别，返回文字字符串。
-    适用于 Linux / 麒麟 UOS 等非 macOS 系统。
-    依赖：sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra
-          pip3 install pytesseract
+    img：若提供预渲染（如已矫正的）图像则直接使用，否则从 page 渲染。
     """
     try:
         import pytesseract
@@ -114,14 +162,16 @@ def _ocr_page_tesseract(page: "fitz.Page", dpi: int = 200) -> str:
 
     import tempfile, os
 
-    scale = dpi / 72
-    mat = fitz.Matrix(scale, scale)
-    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         tmp_path = f.name
     try:
-        pix.save(tmp_path)
+        if img is not None:
+            from PIL import Image as _PILImage
+            _PILImage.fromarray(img).save(tmp_path)
+        else:
+            scale = dpi / 72
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY)
+            pix.save(tmp_path)
         return pytesseract.image_to_string(
             tmp_path,
             lang="chi_sim+chi_tra+eng",
@@ -131,12 +181,13 @@ def _ocr_page_tesseract(page: "fitz.Page", dpi: int = 200) -> str:
         os.unlink(tmp_path)
 
 
-def _ocr_page(page: "fitz.Page", dpi: int = 200) -> str:
+def _ocr_page(page: "fitz.Page", dpi: int = 200,
+              img: "np.ndarray | None" = None) -> str:
     """自动选择 OCR 引擎：macOS 用 Vision，其他系统用 Tesseract。"""
     if sys.platform == "darwin":
-        return _ocr_page_vision(page, dpi)
+        return _ocr_page_vision(page, dpi, img=img)
     else:
-        return _ocr_page_tesseract(page, dpi)
+        return _ocr_page_tesseract(page, dpi, img=img)
 
 
 # ── 二维码 + 国家药监局 API ───────────────────────────────────
@@ -210,6 +261,26 @@ def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
             _, hi_thresh = cv2.threshold(hi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             for src in [hi_gray, hi_thresh]:
                 data, _, _ = detector.detectAndDecode(src)
+                if data:
+                    return data
+
+        # 策略3：透视矫正后重试（处理拍照倾斜导致 QR 码畸变的情况）
+        dewarped = _dewarp_image(img_rgb)
+        if dewarped is not None:
+            import zxingcpp as _zxing
+            for r in _zxing.read_barcodes(dewarped):
+                if r.format == _zxing.BarcodeFormat.QRCode and r.text:
+                    return r.text
+            dw_gray = cv2.cvtColor(dewarped, cv2.COLOR_RGB2GRAY)
+            _, dw_thresh = cv2.threshold(dw_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            dw_h, dw_w = dw_gray.shape
+            dw_r = 5
+            for crop_g in [
+                dw_gray, dw_thresh,
+                dw_gray[: dw_h // dw_r, : dw_w // dw_r],
+                dw_thresh[: dw_h // dw_r, : dw_w // dw_r],
+            ]:
+                data, _, _ = detector.detectAndDecode(crop_g)
                 if data:
                     return data
     except Exception:
@@ -755,12 +826,42 @@ def cmd_detect(args: argparse.Namespace) -> None:
         else:
             log.info("文字提取模式——数字 PDF")
 
+    # ── 透视矫正（仅扫描件模式） ─────────────────────────────
+    # 预先检测文档边界并矫正，改善 QR 解码率和 OCR 准确率
+    use_dewarp = use_ocr  # 仅扫描件才需要矫正；数字 PDF 跳过
+    try:
+        import numpy as _np
+        import cv2 as _cv2
+        _dewarp_available = True
+    except ImportError:
+        _dewarp_available = False
+        use_dewarp = False
+
+    def _get_dewarped(page: "fitz.Page") -> "np.ndarray | None":
+        """以 scale=3 渲染当前页并尝试透视矫正，返回矫正后 RGB 图像或 None。"""
+        if not _dewarp_available:
+            return None
+        try:
+            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+            raw = _np.frombuffer(pix.samples, dtype=_np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            rgb = _cv2.cvtColor(raw, _cv2.COLOR_RGBA2RGB) if pix.n == 4 else raw
+            return _dewarp_image(rgb)
+        except Exception:
+            return None
+
     # ── 逐页扫描 ────────────────────────────────────────────
     detections: list[dict] = []
     qr_hits = 0
     log.info("开始扫描各页……")
     for i in range(total_pages):
         page = src[i]
+
+        # ── 透视矫正（扫描件） ──────────────────────────────
+        dewarped = _get_dewarped(page) if use_dewarp else None
+        if dewarped is not None:
+            log.debug(f"  第{i+1}页 透视矫正 OK ({dewarped.shape[1]}x{dewarped.shape[0]})")
 
         # ── 优先尝试二维码 ──────────────────────────────────
         if use_qr:
@@ -779,7 +880,20 @@ def cmd_detect(args: argparse.Namespace) -> None:
         # ── 回退到 OCR / 文字提取 ──────────────────────────
         if use_ocr:
             try:
-                text = _ocr_page(page, dpi=dpi)
+                # 优先使用矫正后图像（OCR 准确率更高）
+                ocr_img = None
+                if dewarped is not None:
+                    import numpy as np
+                    scale = dpi / 72 / 3  # 已在 scale=3 下矫正，等比换算到目标 DPI
+                    if scale > 1.0:
+                        ocr_img = _cv2.resize(
+                            dewarped,
+                            (int(dewarped.shape[1] * scale), int(dewarped.shape[0] * scale)),
+                            interpolation=_cv2.INTER_CUBIC,
+                        )
+                    else:
+                        ocr_img = dewarped
+                text = _ocr_page(page, dpi=dpi, img=ocr_img)
             except RuntimeError as e:
                 log.error(str(e))
                 sys.exit(1)
