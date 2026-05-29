@@ -144,7 +144,7 @@ def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
     """
     从 PDF 页面解码二维码，返回解码内容字符串，失败返回 None。
     优先使用 zxing-cpp（支持 ECI 编码，国家药监局 QR 码必须），
-    cv2 作为兜底。
+    cv2 作为兜底（全页 + 四角裁剪 + Otsu 二值化）。
     """
     try:
         import numpy as np
@@ -165,7 +165,10 @@ def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
     except Exception:
         pass
 
-    # ── 兜底：cv2（不支持 ECI，但保留以防 zxing-cpp 未安装） ──────
+    # ── 兜底：cv2 ─────────────────────────────────────────────────
+    # 策略1：全页（原图/灰度/锐化/Otsu二值化）
+    # 策略2：四角裁剪（1/5边长）+ Otsu 二值化
+    # 扫描件 QR 码偏小且可能倾斜，裁剪 + 二值化显著提升检出率
     try:
         import cv2
         if pix.n == 4:
@@ -175,10 +178,40 @@ def _decode_qr_page(page: "fitz.Page", scale: float = 3.0) -> str | None:
         gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         detector = cv2.QRCodeDetector()
         kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-        for src in [img_rgb, gray, cv2.filter2D(gray, -1, kernel)]:
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 策略1：全页
+        for src in [img_rgb, gray, cv2.filter2D(gray, -1, kernel), thresh]:
             data, _, _ = detector.detectAndDecode(src)
             if data:
                 return data
+
+        # 策略2：四角高分辨率单独渲染（scale=3 时 QR 码约60px 宽，偏小；
+        #         直接对角落区域用 scale=8 渲染，约 160px 宽，检出率显著提升）
+        pw, ph = page.rect.width, page.rect.height
+        hi_scale = 8.0
+        hi_mat = fitz.Matrix(hi_scale, hi_scale)
+        corner_fracs = [
+            (0, 0.2, 0, 0.2),      # 左上
+            (0, 0.2, 0.8, 1.0),    # 右上
+            (0.8, 1.0, 0, 0.2),    # 左下
+            (0.8, 1.0, 0.8, 1.0),  # 右下
+        ]
+        for y0f, y1f, x0f, x1f in corner_fracs:
+            clip = fitz.Rect(x0f * pw, y0f * ph, x1f * pw, y1f * ph)
+            hi_pix = page.get_pixmap(matrix=hi_mat, clip=clip)
+            hi_img = np.frombuffer(hi_pix.samples, dtype=np.uint8).reshape(
+                hi_pix.height, hi_pix.width, hi_pix.n
+            )
+            hi_gray = cv2.cvtColor(
+                cv2.cvtColor(hi_img, cv2.COLOR_RGBA2RGB) if hi_pix.n == 4 else hi_img,
+                cv2.COLOR_RGB2GRAY,
+            )
+            _, hi_thresh = cv2.threshold(hi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            for src in [hi_gray, hi_thresh]:
+                data, _, _ = detector.detectAndDecode(src)
+                if data:
+                    return data
     except Exception:
         pass
 
@@ -202,17 +235,8 @@ def _fetch_nmpa_cert(qr_url: str, timeout: int = 8) -> dict | None:
     except Exception:
         return None
 
-    # HTML 中嵌入：var Certificate = '{...}';
-    m = re.search(r"var Certificate = '(\{.*?\})';", html, re.DOTALL)
-    if not m:
-        return None
-    try:
-        data = _json.loads(m.group(1))
-        items = data.get("data", {}).get("dataList", [])
-        if not items:
-            return None
-        cert = items[0]
-        surface = {s["name"]: s["value"] for s in cert.get("surface", [])}
+    def _parse_surface(surface_list: list, cert_no_fallback: str | None) -> dict:
+        surface = {s["name"]: s["value"] for s in surface_list}
 
         def _get(*keys):
             for k in keys:
@@ -223,12 +247,36 @@ def _fetch_nmpa_cert(qr_url: str, timeout: int = 8) -> dict | None:
 
         return {
             "batch_no":     _get("批号(Lot No.)", "批号"),
-            "cert_no":      _get("Certificate No.") or cert.get("certificateNumber", "").strip() or None,
+            "cert_no":      _get("Certificate No.") or cert_no_fallback or None,
             "vaccine_name": _get("产品名称(Generic Name)", "产品名称"),
             "manufacturer": _get("生产企业(Manufacturer)", "生产企业"),
         }
-    except Exception:
-        return None
+
+    # ── 格式1：sels.nmpa.gov.cn — var Certificate = '{...}'; ──────
+    m = re.search(r"var Certificate = '(\{.*?\})';", html, re.DOTALL)
+    if m:
+        try:
+            data = _json.loads(m.group(1))
+            items = data.get("data", {}).get("dataList", [])
+            if items:
+                cert = items[0]
+                cn_fallback = cert.get("certificateNumber", "").strip() or None
+                return _parse_surface(cert.get("surface", []), cn_fallback)
+        except Exception:
+            pass
+
+    # ── 格式2：zhjg.nmpa.gov.cn — surface 数组后紧跟 certificateName ─
+    m2 = re.search(r'"surface":\s*\[(.+?)\],\s*"certificateName"', html, re.DOTALL)
+    if m2:
+        try:
+            surface_list = _json.loads('[' + m2.group(1) + ']')
+            cn_m = re.search(r'"certificateNumber":\s*"([^"]+)"', html)
+            cn_fallback = cn_m.group(1).strip() if cn_m else None
+            return _parse_surface(surface_list, cn_fallback)
+        except Exception:
+            pass
+
+    return None
 
 
 # ── 自动识别：首页特征 ────────────────────────────────────────
@@ -256,7 +304,9 @@ _BATCH_SUFFIX = r'(?:[（(][^）)\n]{1,30}[）)])?'   # 可选括号后缀
 
 _RE_BATCH_NO = re.compile(
     r'(?:'
-    r'(?:Lot[:\s]*No|产品批号)[.：: ]*\s*\n\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'    # 双行版/产品批号版
+    # 双行版/产品批号版：Lot No. 与批号之间可有 0-8 行 OCR 噪声行（双栏版式混读），
+    # 批号必须：含数字 + 总长度≥6（排除 Dosage/注射剂 等短字段名）
+    r'(?:Lot[:\s]*No|产品批号)[.：: ]*\s*\n(?:(?!.*?Lot)[^\n]{0,30}\n){0,8}\s*([A-Za-z]{0,3}[0-9][A-Za-z0-9]{4,24}' + _BATCH_SUFFIX + r')'
     r'|([0-9][A-Za-z0-9]{4,11}' + _BATCH_SUFFIX + r')\s*\n\s*Lot[:\s]*No'                    # 逆序版（值在Lot No.前；≤12字符防收检编号误捕获）
     r'|([A-Za-z0-9]{5,20}' + _BATCH_SUFFIX + r')\s*\n\s*收检编号'                            # 双栏版
     r'|批\s*号[：:]\s*([A-Za-z0-9]{3,25}' + _BATCH_SUFFIX + r')'                             # 单行版
