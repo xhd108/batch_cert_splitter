@@ -482,22 +482,28 @@ a:hover { text-decoration: underline; }
         <div class="platform-name">macOS Intel</div>
         <div class="platform-ver">macOS 12 及以上（Intel 芯片）</div>
         <span class="platform-tag" style="background:#f3e8ff;color:#6d28d9">兼容</span>
+        <p style="font-size:12px;color:var(--gray);margin:0">Intel Mac 可直接使用 Apple Silicon 版本，macOS Rosetta 2 自动兼容运行。</p>
         <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_x86_64.dmg"
+           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_arm64.dmg"
            id="dl-mac-x64">
-          ⬇ 下载 .dmg（x86_64）
+          ⬇ 下载 .dmg（通用）
         </a>
       </div>
 
       <div class="platform-card">
         <div class="platform-icon">🐧</div>
         <div class="platform-name">麒麟 / UOS</div>
-        <div class="platform-ver">Kylin V10 / UOS 20（aarch64 / x86_64）</div>
+        <div class="platform-ver">Kylin V10 / UOS 20</div>
         <span class="platform-tag domestic">国产系统</span>
         <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest"
-           id="dl-linux">
-          ⬇ 前往下载页选择架构
+           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_aarch64.deb"
+           id="dl-linux-arm">
+          ⬇ 下载 .deb（aarch64）
+        </a>
+        <a class="platform-btn" style="background:#2563eb"
+           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_x86_64.deb"
+           id="dl-linux-x64">
+          ⬇ 下载 .deb（x86_64）
         </a>
       </div>
 
@@ -599,7 +605,7 @@ document.querySelectorAll('.faq-q').forEach(q => {
   else if (ua.includes('mac arm') || ua.includes('apple m'))
                                    btnId = 'dl-mac-arm';
   else if (ua.includes('mac'))     btnId = 'dl-mac-x64';
-  else if (ua.includes('linux'))   btnId = 'dl-linux';
+  else if (ua.includes('linux'))   btnId = 'dl-linux-x64';
   if (btnId) {
     const btn = document.getElementById(btnId);
     if (btn) {
