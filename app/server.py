@@ -288,6 +288,113 @@ def api_download(file_id: str):
     return send_file(str(zips[0]), as_attachment=True, download_name=zips[0].name)
 
 
+# ── 导出 Excel 索引 ───────────────────────────────────────────
+@app.route("/api/export_excel/<file_id>")
+def api_export_excel(file_id: str):
+    import io
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    if not all(c in "0123456789abcdef" for c in file_id):
+        return jsonify({"error": "非法请求"}), 400
+
+    pdf_path = WORK_DIR / f"{file_id}.pdf"
+
+    try:
+        core.init_db()
+        with core.get_conn() as conn:
+            bf = conn.execute(
+                "SELECT id, original_filename FROM batch_files WHERE original_path=?",
+                (str(pdf_path),),
+            ).fetchone()
+            if not bf:
+                return jsonify({"error": "记录不存在，请先完成拆分"}), 404
+
+            rows = conn.execute(
+                "SELECT batch_no, vaccine_name, manufacturer, cert_no,"
+                " start_page, end_page, page_count, review_status, split_time, notes"
+                " FROM cert_index WHERE batch_file_id=? ORDER BY start_page",
+                (bf["id"],),
+            ).fetchall()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    wb  = openpyxl.Workbook()
+    ws  = wb.active
+    ws.title = "批签发索引"
+
+    hdr_font  = Font(bold=True, color="FFFFFF", size=11)
+    hdr_fill  = PatternFill("solid", fgColor="1A6FC4")
+    title_font = Font(bold=True, size=13)
+    ok_fill   = PatternFill("solid", fgColor="D6F0E0")
+    warn_fill = PatternFill("solid", fgColor="FFF8D6")
+    thin_side = Side(style="thin", color="DDDDDD")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    center    = Alignment(horizontal="center", vertical="center")
+    left_mid  = Alignment(horizontal="left",   vertical="center")
+
+    # 标题行
+    pdf_name   = bf["original_filename"]
+    split_date = (rows[0]["split_time"] if rows else "").split("T")[0]
+    ws.merge_cells("A1:J1")
+    ws["A1"] = f"批签发证明索引 — {pdf_name}（拆分时间：{split_date}）"
+    ws["A1"].font      = title_font
+    ws["A1"].alignment = left_mid
+    ws.row_dimensions[1].height = 28
+
+    # 表头行
+    headers = ["序号", "批号", "疫苗名称", "生产企业", "批签发号",
+               "起始页", "结束页", "页数", "状态", "备注"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=2, column=col, value=h)
+        c.font = hdr_font; c.fill = hdr_fill
+        c.alignment = center; c.border = thin_border
+    ws.row_dimensions[2].height = 22
+
+    # 数据行
+    CENTER_COLS = {1, 6, 7, 8, 9}
+    for i, r in enumerate(rows, 1):
+        is_ok  = r["review_status"] == "ok"
+        fill   = ok_fill if is_ok else warn_fill
+        values = [
+            i,
+            r["batch_no"],
+            r["vaccine_name"] or "",
+            r["manufacturer"] or "",
+            r["cert_no"]      or "",
+            r["start_page"],
+            r["end_page"],
+            r["page_count"],
+            "正常" if is_ok else "待复核",
+            r["notes"] or "",
+        ]
+        rn = i + 2
+        for col, val in enumerate(values, 1):
+            c = ws.cell(row=rn, column=col, value=val)
+            c.fill = fill; c.border = thin_border
+            c.alignment = center if col in CENTER_COLS else left_mid
+        ws.row_dimensions[rn].height = 18
+
+    # 列宽
+    for col, w in enumerate([6, 22, 24, 22, 22, 8, 8, 6, 8, 30], 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    ws.freeze_panes = "A3"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    excel_name = f"{Path(pdf_name).stem}_批签发索引.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=excel_name,
+    )
+
+
 # ── 历史记录接口 ──────────────────────────────────────────────
 @app.route("/api/records")
 def api_records():

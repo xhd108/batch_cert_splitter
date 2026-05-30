@@ -355,8 +355,12 @@ function renderDone(data) {
     (data.abnormal ? `，其中 <strong style="color:#b45309">${data.abnormal} 份</strong> 页数异常，请人工核查` : '，全部正常') + '。';
 
   const dl = $('btn-download');
-  dl.href          = `/api/download/${state.fileId}`;
-  dl.download      = '';
+  dl.href     = `/api/download/${state.fileId}`;
+  dl.download = '';
+
+  const xl = $('btn-excel');
+  xl.href     = `/api/export_excel/${state.fileId}`;
+  xl.download = '';
 
   doneTbody.innerHTML = '';
   (data.results || []).forEach(r => {
