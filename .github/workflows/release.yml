@@ -84,8 +84,7 @@ jobs:
           python-version: "3.11"
 
       - name: 安装 Tesseract
-        run: |
-          choco install tesseract --params "/Languages:chi_sim" -y
+        run: choco install tesseract --params "/Languages:chi_sim" -y
 
       - name: 安装依赖
         run: |
@@ -97,9 +96,37 @@ jobs:
         run: choco install innosetup -y
 
       - name: 打包
-        run: .\build\windows\build_windows.bat
+        shell: pwsh
         env:
           VERSION: ${{ github.ref_name }}
+        run: |
+          # PyInstaller
+          pyinstaller build/cert_splitter.spec `
+            --distpath dist `
+            --workpath build/_pyinstaller_work `
+            --noconfirm
+          if (-not (Test-Path "dist/批签发拆分工具")) {
+            Write-Error "PyInstaller 输出目录不存在"; exit 1
+          }
+
+          # 复制 Tesseract 语言包
+          $tessData = "C:\Program Files\Tesseract-OCR\tessdata"
+          if (Test-Path $tessData) {
+            New-Item -ItemType Directory -Force "dist/批签发拆分工具/tessdata" | Out-Null
+            Copy-Item "$tessData\chi_sim.traineddata","$tessData\eng.traineddata" `
+              "dist/批签发拆分工具/tessdata/" -ErrorAction SilentlyContinue
+          }
+
+          # Inno Setup
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc -ErrorAction SilentlyContinue)?.Source
+          }
+          if (-not $iscc) { Write-Error "未找到 Inno Setup"; exit 1 }
+          & $iscc "build\windows\installer.iss" "/DMyAppVersion=$env:VERSION"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Inno Setup 失败 ($LASTEXITCODE)"; exit 1 }
+          Write-Host "✓ Windows 安装包已生成"
+          Get-ChildItem dist/*.exe
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
