@@ -3,7 +3,7 @@
 
 #define MyAppName      "批签发证明拆分工具"
 #define MyAppPublisher "批签发工具"
-#define MyAppURL       "https://github.com/YOUR_ORG/batch_cert_splitter"
+#define MyAppURL       "https://github.com/xhd108/batch_cert_splitter"
 #define MyAppExeName   "批签发拆分工具.exe"
 #ifndef MyAppVersion
   #define MyAppVersion "1.0.0"
