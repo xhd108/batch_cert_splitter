@@ -110,7 +110,9 @@ jobs:
   # ── Kylin / UOS (aarch64 + x86_64) ─────────────────────────
   build-linux:
     runs-on: ubuntu-22.04
+    continue-on-error: true   # Linux 失败不阻塞 macOS/Windows release
     strategy:
+      fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
     steps:
@@ -123,10 +125,15 @@ jobs:
       - name: 打包（Docker）
         run: |
           ARCH=${{ matrix.arch }}
-          IMAGE="arm64v8/python:3.11-slim"
-          [ "$ARCH" = "x86_64" ] && IMAGE="python:3.11-slim"
-          docker run --rm --platform linux/${ARCH/x86_64/amd64} \
+          PLATFORM="linux/amd64"
+          IMAGE="python:3.11-slim"
+          if [ "$ARCH" = "aarch64" ]; then
+            PLATFORM="linux/arm64"
+            IMAGE="arm64v8/python:3.11-slim"
+          fi
+          docker run --rm --platform "$PLATFORM" \
             -v "$PWD:/app" -w /app \
+            -e VERSION="${{ github.ref_name }}" \
             "$IMAGE" bash build/linux/build_linux.sh
         env:
           VERSION: ${{ github.ref_name }}
@@ -139,7 +146,7 @@ jobs:
 
   # ── 发布 GitHub Release ──────────────────────────────────────
   release:
-    needs: [build-macos-arm64, build-macos-x64, build-windows, build-linux]
+    needs: [build-macos-arm64, build-macos-x64, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

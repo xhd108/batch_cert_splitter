@@ -14,7 +14,7 @@ echo "=== 批签发拆分工具 Linux 打包 v${VERSION} (${ARCH}) ==="
 apt-get update -qq
 apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-chi-sim \
-    libgl1-mesa-glx libglib2.0-0 \
+    libgl1 libglib2.0-0 libgomp1 \
     ruby ruby-dev rubygems build-essential
 
 gem install fpm --no-document
