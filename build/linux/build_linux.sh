@@ -38,7 +38,8 @@ cp /usr/share/tesseract-ocr/*/tessdata/{chi_sim,eng}.traineddata \
    "dist/批签发拆分工具/tessdata/" 2>/dev/null || true
 
 # 打包 .deb
-DEB_NAME="批签发拆分工具_v${VERSION}_linux_${ARCH}.deb"
+VER="${VERSION#v}"   # strip leading 'v' if present
+DEB_NAME="cert-splitter_v${VER}_linux_${ARCH}.deb"
 fpm -s dir -t deb \
     --name "cert-splitter" \
     --version "$VERSION" \

@@ -33,7 +33,8 @@ echo "✓ .app 打包完成: $APP_PATH"
 
 # ── 生成 DMG ─────────────────────────────────────────────────
 if command -v create-dmg &>/dev/null; then
-    DMG_NAME="批签发拆分工具_v${VERSION}_macOS_${ARCH}.dmg"
+    VER="${VERSION#v}"   # strip leading 'v' if present
+    DMG_NAME="cert-splitter_v${VER}_macOS_${ARCH}.dmg"
     create-dmg \
         --volname "批签发拆分工具 v${VERSION}" \
         --window-pos 200 120 \

@@ -125,7 +125,8 @@ jobs:
             $iscc = (Get-Command iscc -ErrorAction SilentlyContinue)?.Source
           }
           if (-not $iscc) { Write-Error "未找到 Inno Setup"; exit 1 }
-          & $iscc "build\windows\installer.iss" "/DMyAppVersion=$env:VERSION"
+          $ver = $env:VERSION -replace '^v',''   # strip leading 'v'
+          & $iscc "build\windows\installer.iss" "/DMyAppVersion=$ver"
           if ($LASTEXITCODE -ne 0) { Write-Error "Inno Setup 失败 ($LASTEXITCODE)"; exit 1 }
           Write-Host "✓ Windows 安装包已生成"
           Get-ChildItem dist/*.exe
