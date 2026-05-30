@@ -43,7 +43,9 @@ jobs:
 
   # ── macOS x86_64 (Intel) ────────────────────────────────────
   build-macos-x64:
-    runs-on: macos-13   # Intel runner
+    runs-on: macos-13   # Intel runner（runner 资源有限，不阻塞 release）
+    continue-on-error: true
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -173,7 +175,7 @@ jobs:
 
   # ── 发布 GitHub Release ──────────────────────────────────────
   release:
-    needs: [build-macos-arm64, build-macos-x64, build-windows]
+    needs: [build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
