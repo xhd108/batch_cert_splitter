@@ -686,7 +686,7 @@ def _build_detect_index(
 ) -> tuple[list[dict], list[str]]:
     """
     将检测到的疑似首页列表转换为起止页索引，并生成警告信息。
-    detections: [{"page": int, "conf": str, "fields": dict}, ...]
+    detections: [{"page": int, "conf": str, "source": str, "fields": dict}, ...]
     返回: (records, warnings)
     """
     warnings: list[str] = []
@@ -710,6 +710,7 @@ def _build_detect_index(
             "start_page":   1,
             "end_page":     detections[0]["page"] - 1,
             "conf":         "手动",
+            "source":       "manual",
             "notes":        "自动检测未覆盖，请核查",
         })
 
@@ -724,6 +725,7 @@ def _build_detect_index(
             "start_page":   det["page"],
             "end_page":     end,
             "conf":         det["conf"],
+            "source":       det.get("source", "ocr"),
             "notes":        "自动识别" if det["conf"] == "高" else "中置信，请核查",
         })
 
@@ -874,7 +876,7 @@ def cmd_detect(args: argparse.Namespace) -> None:
                         f"  QR ✓ 第 {i+1} 页  批号={fields['batch_no']}  "
                         f"批签发号={fields.get('cert_no') or '—'}"
                     )
-                    detections.append({"page": i + 1, "conf": "高", "fields": fields})
+                    detections.append({"page": i + 1, "conf": "高", "source": "qr", "fields": fields})
                     continue   # 不再做 OCR
 
         # ── 回退到 OCR / 文字提取 ──────────────────────────
@@ -905,7 +907,7 @@ def cmd_detect(args: argparse.Namespace) -> None:
         log.debug(f"  第{i+1:>3}页  {status}  {text[:40].replace(chr(10),' ')}")
         if conf:
             log.info(f"  OCR 第 {i+1} 页  置信度={conf}  批号={fields.get('batch_no') or '未提取'}")
-            detections.append({"page": i + 1, "conf": conf, "fields": fields})
+            detections.append({"page": i + 1, "conf": conf, "source": "ocr", "fields": fields})
 
     # ── 构建索引 ────────────────────────────────────────────
     records, warnings = _build_detect_index(detections, total_pages)

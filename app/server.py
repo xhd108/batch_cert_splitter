@@ -101,7 +101,7 @@ def api_detect():
                     if qr and "nmpa.gov.cn" in qr:
                         fields = core._fetch_nmpa_cert(qr)
                         if fields and fields.get("batch_no"):
-                            detections.append({"page": i + 1, "conf": "高", "fields": fields})
+                            detections.append({"page": i + 1, "conf": "高", "source": "qr", "fields": fields})
                             yield _sse({
                                 "type": "page", "page": i + 1, "total": total_pages,
                                 "source": "qr", "batch_no": fields.get("batch_no", ""),
@@ -126,7 +126,7 @@ def api_detect():
                 "conf": conf or "",
             })
             if conf:
-                detections.append({"page": i + 1, "conf": conf, "fields": fields})
+                detections.append({"page": i + 1, "conf": conf, "source": "ocr", "fields": fields})
 
         # 构建索引
         records, warnings = core._build_detect_index(detections, total_pages)

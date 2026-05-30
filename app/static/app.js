@@ -158,9 +158,14 @@ function renderResult(msg) {
   hide(secProgress);
   show(secResult);
 
-  const qrCount   = msg.records.filter(r => r.conf === '高' && msg.records).length;
-  resultMeta.textContent =
-    `共识别 ${msg.records.length} 份证明，PDF 共 ${msg.total_pages} 页`;
+  const qrCount  = msg.records.filter(r => r.source === 'qr').length;
+  const ocrCount = msg.records.filter(r => r.source === 'ocr').length;
+  const manCount = msg.records.filter(r => r.source === 'manual').length;
+  const parts = [`共识别 ${msg.records.length} 份证明，PDF 共 ${msg.total_pages} 页`];
+  if (qrCount)  parts.push(`🔵 QR ${qrCount}`);
+  if (ocrCount) parts.push(`🟢 OCR ${ocrCount}`);
+  if (manCount) parts.push(`🔴 手动 ${manCount}`);
+  resultMeta.textContent = parts.join('　');
 
   // 警告
   if (msg.warnings && msg.warnings.length) {
@@ -175,10 +180,24 @@ function renderResult(msg) {
 }
 
 function rowClass(r) {
-  if (r._source === 'qr')    return 'row-qr';
+  if (r.source === 'qr')     return 'row-qr';
   if (r.conf === '高')        return 'row-high';
   if (r.conf === '中')        return 'row-mid';
   return 'row-manual';
+}
+
+const SOURCE_BADGE = {
+  qr:     '<span class="src-badge src-qr">🔵 QR</span>',
+  ocr:    null,   // 由 conf 决定
+  manual: '<span class="src-badge src-manual">🔴 手动</span>',
+};
+
+function sourceBadge(r) {
+  if (r.source === 'qr')     return '<span class="src-badge src-qr">🔵 QR</span>';
+  if (r.source === 'manual') return '<span class="src-badge src-manual">🔴 手动</span>';
+  if (r.conf === '高')        return '<span class="src-badge src-ocr-high">🟢 OCR</span>';
+  if (r.conf === '中')        return '<span class="src-badge src-ocr-mid">🟡 OCR?</span>';
+  return '<span class="src-badge src-manual">🔴 手动</span>';
 }
 
 function addRow(r, idx) {
@@ -192,6 +211,7 @@ function addRow(r, idx) {
 
   tr.innerHTML = `
     <td style="text-align:center;color:#9ca3af">${idx + 1}</td>
+    <td style="text-align:center">${sourceBadge(r)}</td>
     <td><input class="cell-input" data-field="batch_no"     value="${esc(r.batch_no || '')}"></td>
     <td><input class="cell-input" data-field="vaccine_name" value="${esc(r.vaccine_name || '')}"></td>
     <td><input class="cell-input" data-field="manufacturer" value="${esc(r.manufacturer || '')}"></td>
