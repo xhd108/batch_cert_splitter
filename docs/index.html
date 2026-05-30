@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>批签发证明拆分工具</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --blue:      #1a6fc4;
+  --blue-dark: #155da8;
+  --blue-pale: #e8f0fb;
+  --green:     #1a7a3c;
+  --text:      #1a1a2e;
+  --gray:      #6b7280;
+  --border:    #dde1e7;
+  --radius:    10px;
+  --shadow:    0 2px 16px rgba(0,0,0,.09);
+}
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-size: 15px;
+  color: var(--text);
+  background: #f4f6f9;
+  line-height: 1.7;
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── 导航 ── */
+.nav {
+  background: var(--blue);
+  padding: 0 24px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+.nav-logo { color: #fff; font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+.nav-links { display: flex; gap: 24px; }
+.nav-links a { color: rgba(255,255,255,.85); font-size: 14px; }
+.nav-links a:hover { color: #fff; text-decoration: none; }
+
+/* ── Hero ── */
+.hero {
+  background: linear-gradient(135deg, #1a6fc4 0%, #0e4d8a 100%);
+  color: #fff;
+  text-align: center;
+  padding: 72px 24px 64px;
+}
+.hero-badge {
+  display: inline-block;
+  background: rgba(255,255,255,.15);
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 20px;
+  padding: 4px 14px;
+  font-size: 13px;
+  margin-bottom: 20px;
+  letter-spacing: .5px;
+}
+.hero h1 {
+  font-size: clamp(26px, 5vw, 42px);
+  font-weight: 700;
+  margin-bottom: 16px;
+  line-height: 1.3;
+}
+.hero p {
+  font-size: clamp(15px, 2.5vw, 18px);
+  color: rgba(255,255,255,.85);
+  max-width: 600px;
+  margin: 0 auto 36px;
+}
+.hero-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  text-decoration: none;
+  transition: all .15s;
+}
+.btn-white {
+  background: #fff;
+  color: var(--blue);
+}
+.btn-white:hover { background: #f0f4ff; text-decoration: none; }
+.btn-outline {
+  background: transparent;
+  color: #fff;
+  border: 2px solid rgba(255,255,255,.6);
+}
+.btn-outline:hover { background: rgba(255,255,255,.1); text-decoration: none; }
+
+/* ── 通用容器 ── */
+.container {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ── Section 标题 ── */
+.section { padding: 64px 0; }
+.section-label {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--blue);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.section-title {
+  text-align: center;
+  font-size: clamp(20px, 3.5vw, 28px);
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.section-sub {
+  text-align: center;
+  color: var(--gray);
+  margin-bottom: 48px;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── 特性卡片 ── */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+.feature-card {
+  background: #fff;
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+  border-top: 3px solid var(--blue);
+}
+.feature-icon { font-size: 32px; margin-bottom: 14px; }
+.feature-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.feature-desc { color: var(--gray); font-size: 14px; }
+
+/* ── 流程 ── */
+.flow { background: var(--blue-pale); }
+.steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.step {
+  flex: 1;
+  min-width: 160px;
+  max-width: 200px;
+  text-align: center;
+  padding: 0 12px;
+  position: relative;
+}
+.step:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  right: -14px;
+  top: 18px;
+  font-size: 22px;
+  color: var(--blue);
+  font-weight: 700;
+}
+.step-num {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+}
+.step-title { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+.step-desc { color: var(--gray); font-size: 13px; line-height: 1.5; }
+
+/* ── 平台下载 ── */
+.platforms-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.platform-card {
+  background: #fff;
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.platform-icon { font-size: 36px; }
+.platform-name { font-weight: 700; font-size: 16px; }
+.platform-ver  { color: var(--gray); font-size: 13px; }
+.platform-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--blue);
+  color: #fff;
+  text-decoration: none;
+  transition: background .15s;
+  margin-top: 6px;
+}
+.platform-btn:hover { background: var(--blue-dark); text-decoration: none; }
+.platform-btn.disabled {
+  background: #e5e7eb;
+  color: #9ca3af;
+  cursor: default;
+  pointer-events: none;
+}
+.platform-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.platform-tag.domestic { background: #d6f0e0; color: #166534; }
+
+/* ── 识别精度 ── */
+.accuracy { background: #fff; }
+.accuracy-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.acc-card {
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  text-align: center;
+}
+.acc-card.qr   { background: #dbeafe; }
+.acc-card.high { background: #d6f0e0; }
+.acc-card.mid  { background: #fef9c3; }
+.acc-card.manual { background: #fde8e8; }
+.acc-num  { font-size: 40px; font-weight: 800; }
+.acc-num.qr-c   { color: #1d4ed8; }
+.acc-num.high-c { color: var(--green); }
+.acc-num.mid-c  { color: #b45309; }
+.acc-num.man-c  { color: #b91c1c; }
+.acc-label { font-weight: 600; margin: 4px 0; }
+.acc-desc  { font-size: 13px; color: var(--gray); }
+
+/* ── FAQ ── */
+.faq-list { max-width: 720px; margin: 0 auto; }
+.faq-item {
+  background: #fff;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.faq-q {
+  padding: 16px 20px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.faq-q::after { content: "＋"; color: var(--blue); font-size: 18px; flex-shrink: 0; }
+.faq-item.open .faq-q::after { content: "－"; }
+.faq-a {
+  display: none;
+  padding: 0 20px 16px;
+  color: var(--gray);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.faq-item.open .faq-a { display: block; }
+
+/* ── Footer ── */
+.footer {
+  background: #1a1a2e;
+  color: rgba(255,255,255,.6);
+  text-align: center;
+  padding: 32px 24px;
+  font-size: 13px;
+}
+.footer a { color: rgba(255,255,255,.8); }
+
+/* ── 响应式 ── */
+@media (max-width: 600px) {
+  .nav-links { display: none; }
+  .step:not(:last-child)::after { display: none; }
+  .step { min-width: 120px; }
+}
+</style>
+</head>
+<body>
+
+<!-- 导航 -->
+<nav class="nav">
+  <span class="nav-logo">批签发证明拆分工具</span>
+  <div class="nav-links">
+    <a href="#features">功能特性</a>
+    <a href="#flow">使用流程</a>
+    <a href="#download">下载安装</a>
+    <a href="#faq">常见问题</a>
+    <a href="https://github.com/YOUR_ORG/batch_cert_splitter" target="_blank">GitHub</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge">面向疾控中心免疫规划科</div>
+  <h1>批签发证明拆分工具</h1>
+  <p>将市级疾控下发的批签发合并 PDF，自动识别、一键拆分、按批号归档，无需编程经验，双击启动即可使用。</p>
+  <div class="hero-actions">
+    <a class="btn btn-white" href="#download">立即下载</a>
+    <a class="btn btn-outline" href="https://github.com/YOUR_ORG/batch_cert_splitter" target="_blank">查看源码</a>
+  </div>
+</section>
+
+<!-- 功能特性 -->
+<section class="section" id="features">
+  <div class="container">
+    <div class="section-label">功能特性</div>
+    <h2 class="section-title">为基层疾控量身设计</h2>
+    <p class="section-sub">覆盖从 PDF 上传到拆分归档的完整工作流，减少人工核对工作量。</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🔵</div>
+        <div class="feature-title">二维码优先识别</div>
+        <div class="feature-desc">扫描每份证明首页二维码，直连国家药监局数据库获取批号、疫苗名称、生产企业等准确字段，识别精度最高。</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🟢</div>
+        <div class="feature-title">OCR 智能兜底</div>
+        <div class="feature-desc">二维码失败时自动切换 OCR，macOS 使用系统 Vision 框架，Windows / 国产系统使用 Tesseract，全程无需联网。</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✏️</div>
+        <div class="feature-title">在线编辑复核</div>
+        <div class="feature-desc">识别结果在浏览器内以表格展示，批号、页码、疫苗名称均可直接点击修改，颜色标注置信度，可疑行一目了然。</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <div class="feature-title">一键拆分下载</div>
+        <div class="feature-desc">确认无误后一键拆分，各批号 PDF 自动命名，打包为 ZIP 下载；同步生成 Excel 索引，方便存档上报。</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🗄️</div>
+        <div class="feature-title">本地历史记录</div>
+        <div class="feature-desc">每次拆分结果自动写入本地 SQLite 数据库，可随时查询历史批次，数据不离本机，符合政务网安全要求。</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📐</div>
+        <div class="feature-title">透视矫正预处理</div>
+        <div class="feature-desc">自动检测并矫正手机拍摄的梯形变形，改善扫描件的 OCR 和 QR 识别成功率，无需手动预处理图像。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 使用流程 -->
+<section class="section flow" id="flow">
+  <div class="container">
+    <div class="section-label">使用流程</div>
+    <h2 class="section-title">四步完成拆分</h2>
+    <p class="section-sub">全程图形界面操作，无需命令行。</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-title">上传 PDF</div>
+        <div class="step-desc">拖拽或点击选择批签发合并 PDF，支持扫描版大文件</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-title">自动识别</div>
+        <div class="step-desc">二维码优先，OCR 兜底，逐页扫描显示实时进度</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-title">在线复核</div>
+        <div class="step-desc">表格内直接修改可疑行，颜色标注置信度等级</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-title">下载存档</div>
+        <div class="step-desc">一键拆分，下载 ZIP + Excel 索引，完成归档</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 识别精度 -->
+<section class="section accuracy">
+  <div class="container">
+    <div class="section-label">识别精度</div>
+    <h2 class="section-title">基于 21 个真实 PDF 验证</h2>
+    <p class="section-sub">覆盖 141 份批签发证明，包含多种扫描质量和版式。</p>
+    <div class="accuracy-cards">
+      <div class="acc-card qr">
+        <div class="acc-num qr-c">🔵 QR</div>
+        <div class="acc-label">二维码识别</div>
+        <div class="acc-desc">直连国家药监局数据库，字段完全准确</div>
+      </div>
+      <div class="acc-card high">
+        <div class="acc-num high-c">🟢 高</div>
+        <div class="acc-label">OCR 高置信</div>
+        <div class="acc-desc">批号正则精确匹配，可直接使用</div>
+      </div>
+      <div class="acc-card mid">
+        <div class="acc-num mid-c">🟡 中</div>
+        <div class="acc-label">OCR 中置信</div>
+        <div class="acc-desc">建议人工核查确认</div>
+      </div>
+      <div class="acc-card manual">
+        <div class="acc-num man-c">🔴 手动</div>
+        <div class="acc-label">未识别</div>
+        <div class="acc-desc">扫描质量过低，需手动填写批号</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 下载 -->
+<section class="section" id="download" style="background:#f4f6f9">
+  <div class="container">
+    <div class="section-label">下载安装</div>
+    <h2 class="section-title">支持四大平台</h2>
+    <p class="section-sub">双击安装包，免配置，启动后自动在浏览器中打开操作界面。</p>
+    <div class="platforms-grid">
+
+      <div class="platform-card">
+        <div class="platform-icon">🪟</div>
+        <div class="platform-name">Windows</div>
+        <div class="platform-ver">Windows 10 / 11（64位）</div>
+        <span class="platform-tag">优先支持</span>
+        <a class="platform-btn"
+           href="https://github.com/YOUR_ORG/batch_cert_splitter/releases/latest/download/批签发拆分工具_Windows_x64.exe"
+           id="dl-win">
+          ⬇ 下载 .exe 安装包
+        </a>
+      </div>
+
+      <div class="platform-card">
+        <div class="platform-icon"></div>
+        <div class="platform-name">macOS Apple Silicon</div>
+        <div class="platform-ver">macOS 12 及以上（M 系列芯片）</div>
+        <span class="platform-tag">推荐</span>
+        <a class="platform-btn"
+           href="https://github.com/YOUR_ORG/batch_cert_splitter/releases/latest/download/批签发拆分工具_macOS_arm64.dmg"
+           id="dl-mac-arm">
+          ⬇ 下载 .dmg（arm64）
+        </a>
+      </div>
+
+      <div class="platform-card">
+        <div class="platform-icon"></div>
+        <div class="platform-name">macOS Intel</div>
+        <div class="platform-ver">macOS 12 及以上（Intel 芯片）</div>
+        <span class="platform-tag" style="background:#f3e8ff;color:#6d28d9">兼容</span>
+        <a class="platform-btn"
+           href="https://github.com/YOUR_ORG/batch_cert_splitter/releases/latest/download/批签发拆分工具_macOS_x64.dmg"
+           id="dl-mac-x64">
+          ⬇ 下载 .dmg（x86_64）
+        </a>
+      </div>
+
+      <div class="platform-card">
+        <div class="platform-icon">🐧</div>
+        <div class="platform-name">麒麟 / UOS</div>
+        <div class="platform-ver">Kylin V10 / UOS 20（aarch64 / x86_64）</div>
+        <span class="platform-tag domestic">国产系统</span>
+        <a class="platform-btn"
+           href="https://github.com/YOUR_ORG/batch_cert_splitter/releases/latest"
+           id="dl-linux">
+          ⬇ 前往下载页选择架构
+        </a>
+      </div>
+
+    </div>
+    <p style="text-align:center;margin-top:24px;color:var(--gray);font-size:13px">
+      所有版本均可在 <a href="https://github.com/YOUR_ORG/batch_cert_splitter/releases" target="_blank">GitHub Releases</a> 找到，
+      含 SHA256 校验文件。
+    </p>
+  </div>
+</section>
+
+<!-- 常见问题 -->
+<section class="section" id="faq" style="background:#fff">
+  <div class="container">
+    <div class="section-label">常见问题</div>
+    <h2 class="section-title">FAQ</h2>
+    <p class="section-sub" style="margin-bottom:32px"></p>
+    <div class="faq-list">
+
+      <div class="faq-item">
+        <div class="faq-q">需要联网才能使用吗？</div>
+        <div class="faq-a">
+          默认开启二维码模式，会联网访问国家药监局网站获取批签发信息（仅查询公开数据，无需账号）。
+          若在政务专网等无互联网环境下使用，勾选"离线模式"即可切换为纯 OCR，全程不联网。
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">为什么部分页面无法识别二维码？</div>
+        <div class="faq-a">
+          主要有两种情况：①扫描噪声过高（手机拍摄纸张纹理被误识为黑点），导致 QR 定位图案无法检出；
+          ②证明边框线与二维码角落定位图案粘连，破坏了图案结构。遇到这类情况程序会自动切换 OCR，
+          识别到的批号以颜色标注置信度，建议人工核查黄色和红色行。
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">数据存在哪里？会上传到云端吗？</div>
+        <div class="faq-a">
+          所有数据（PDF、拆分结果、历史记录数据库）均保存在本机，程序不向任何第三方服务器上传文件。
+          二维码模式下仅向国家药监局公开查询接口发送 URL 请求，不包含任何文件内容。
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Windows 安装后提示"Windows 已保护你的电脑"？</div>
+        <div class="faq-a">
+          这是 Windows SmartScreen 对未签名应用的默认提示，非病毒。
+          点击"更多信息"→"仍要运行"即可。您也可以在 GitHub Releases 页面核对 SHA256 校验值以确认文件完整性。
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">支持哪些 PDF 类型？</div>
+        <div class="faq-a">
+          支持文字层 PDF 和扫描版 PDF（图像 PDF）。扫描版会自动启用 OCR；文字层 PDF 直接提取文本，
+          速度更快。多份证明合并在一个 PDF 中的场景（市级疾控常见下发格式）是本工具的主要使用场景。
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">如何反馈问题或建议？</div>
+        <div class="faq-a">
+          请在 <a href="https://github.com/YOUR_ORG/batch_cert_splitter/issues" target="_blank">GitHub Issues</a>
+          提交，附上操作系统版本、问题描述和（如有）截图。处理批号相关的识别错误时，提供脱敏后的 PDF 片段有助于快速定位原因。
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <p>批签发证明拆分工具 · 开源免费 · 适用于基层疾控中心免疫规划工作</p>
+  <p style="margin-top:8px">
+    <a href="https://github.com/YOUR_ORG/batch_cert_splitter" target="_blank">GitHub</a> ·
+    <a href="https://github.com/YOUR_ORG/batch_cert_splitter/releases" target="_blank">所有版本</a> ·
+    <a href="https://github.com/YOUR_ORG/batch_cert_splitter/issues" target="_blank">问题反馈</a>
+  </p>
+</footer>
+
+<script>
+// FAQ 折叠
+document.querySelectorAll('.faq-q').forEach(q => {
+  q.addEventListener('click', () => {
+    const item = q.parentElement;
+    const wasOpen = item.classList.contains('open');
+    document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+    if (!wasOpen) item.classList.add('open');
+  });
+});
+
+// 根据 UA 高亮推荐平台
+(function highlightPlatform() {
+  const ua = navigator.userAgent.toLowerCase();
+  let btnId = null;
+  if (ua.includes('win'))          btnId = 'dl-win';
+  else if (ua.includes('mac arm') || ua.includes('apple m'))
+                                   btnId = 'dl-mac-arm';
+  else if (ua.includes('mac'))     btnId = 'dl-mac-x64';
+  else if (ua.includes('linux'))   btnId = 'dl-linux';
+  if (btnId) {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      const card = btn.closest('.platform-card');
+      if (card) card.style.outline = '2px solid #1a6fc4';
+    }
+  }
+})();
+</script>
+</body>
+</html>
