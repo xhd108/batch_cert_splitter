@@ -229,6 +229,10 @@ a:hover { text-decoration: underline; }
   margin-top: 6px;
 }
 .platform-btn:hover { background: var(--blue-dark); text-decoration: none; }
+.platform-btn.gitee { background: #c71d23; }
+.platform-btn.gitee:hover { background: #a3161b; text-decoration: none; }
+.dl-group { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.dl-label { font-size: 11px; color: var(--gray); margin-bottom: 2px; }
 .platform-btn.disabled {
   background: #e5e7eb;
   color: #9ca3af;
@@ -458,11 +462,16 @@ a:hover { text-decoration: underline; }
         <div class="platform-name">Windows</div>
         <div class="platform-ver">Windows 10 / 11（64位）</div>
         <span class="platform-tag">优先支持</span>
-        <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_Windows_x64.exe"
-           id="dl-win">
-          ⬇ 下载 .exe 安装包
-        </a>
+        <div class="dl-group">
+          <a class="platform-btn" id="dl-win"
+             href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_Windows_x64.exe">
+            ⬇ GitHub 下载
+          </a>
+          <a class="platform-btn gitee"
+             href="https://gitee.com/xhd108/batch_cert_splitter/releases/download/v1.0.0/cert-splitter_v1.0.0_Windows_x64.exe">
+            ⬇ 国内镜像下载
+          </a>
+        </div>
       </div>
 
       <div class="platform-card">
@@ -470,11 +479,16 @@ a:hover { text-decoration: underline; }
         <div class="platform-name">macOS Apple Silicon</div>
         <div class="platform-ver">macOS 12 及以上（M 系列芯片）</div>
         <span class="platform-tag">推荐</span>
-        <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_arm64.dmg"
-           id="dl-mac-arm">
-          ⬇ 下载 .dmg（arm64）
-        </a>
+        <div class="dl-group">
+          <a class="platform-btn" id="dl-mac-arm"
+             href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_arm64.dmg">
+            ⬇ GitHub 下载
+          </a>
+          <a class="platform-btn gitee"
+             href="https://gitee.com/xhd108/batch_cert_splitter/releases/download/v1.0.0/cert-splitter_v1.0.0_macOS_arm64.dmg">
+            ⬇ 国内镜像下载
+          </a>
+        </div>
       </div>
 
       <div class="platform-card">
@@ -482,12 +496,17 @@ a:hover { text-decoration: underline; }
         <div class="platform-name">macOS Intel</div>
         <div class="platform-ver">macOS 12 及以上（Intel 芯片）</div>
         <span class="platform-tag" style="background:#f3e8ff;color:#6d28d9">兼容</span>
-        <p style="font-size:12px;color:var(--gray);margin:0">Intel Mac 可直接使用 Apple Silicon 版本，macOS Rosetta 2 自动兼容运行。</p>
-        <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_arm64.dmg"
-           id="dl-mac-x64">
-          ⬇ 下载 .dmg（通用）
-        </a>
+        <p style="font-size:12px;color:var(--gray);margin:0">Intel Mac 可直接使用 Apple Silicon 版本，Rosetta 2 自动兼容。</p>
+        <div class="dl-group">
+          <a class="platform-btn" id="dl-mac-x64"
+             href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_macOS_arm64.dmg">
+            ⬇ GitHub 下载
+          </a>
+          <a class="platform-btn gitee"
+             href="https://gitee.com/xhd108/batch_cert_splitter/releases/download/v1.0.0/cert-splitter_v1.0.0_macOS_arm64.dmg">
+            ⬇ 国内镜像下载
+          </a>
+        </div>
       </div>
 
       <div class="platform-card">
@@ -495,16 +514,26 @@ a:hover { text-decoration: underline; }
         <div class="platform-name">麒麟 / UOS</div>
         <div class="platform-ver">Kylin V10 / UOS 20</div>
         <span class="platform-tag domestic">国产系统</span>
-        <a class="platform-btn"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_aarch64.deb"
-           id="dl-linux-arm">
-          ⬇ 下载 .deb（aarch64）
-        </a>
-        <a class="platform-btn" style="background:#2563eb"
-           href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_x86_64.deb"
-           id="dl-linux-x64">
-          ⬇ 下载 .deb（x86_64）
-        </a>
+        <div class="dl-group">
+          <div class="dl-label">aarch64（飞腾/鲲鹏）</div>
+          <a class="platform-btn" id="dl-linux-arm"
+             href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_aarch64.deb">
+            ⬇ GitHub 下载
+          </a>
+          <a class="platform-btn gitee"
+             href="https://gitee.com/xhd108/batch_cert_splitter/releases/download/v1.0.0/cert-splitter_v1.0.0_linux_aarch64.deb">
+            ⬇ 国内镜像下载
+          </a>
+          <div class="dl-label" style="margin-top:6px">x86_64（兆芯/海光/Intel）</div>
+          <a class="platform-btn" id="dl-linux-x64"
+             href="https://github.com/xhd108/batch_cert_splitter/releases/latest/download/cert-splitter_v1.0.0_linux_x86_64.deb">
+            ⬇ GitHub 下载
+          </a>
+          <a class="platform-btn gitee"
+             href="https://gitee.com/xhd108/batch_cert_splitter/releases/download/v1.0.0/cert-splitter_v1.0.0_linux_x86_64.deb">
+            ⬇ 国内镜像下载
+          </a>
+        </div>
       </div>
 
     </div>
