@@ -29,7 +29,8 @@ jobs:
   # ── 同步 Release 文件（仅 tag push 或手动指定） ─────────────
   mirror-release:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.upload_release != ''
+    needs: mirror-code
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || inputs.upload_release != '')
     steps:
       - name: 确定版本号
         id: ver
@@ -67,11 +68,11 @@ jobs:
           fi
 
           # 创建 Release
-          BODY="自动同步自 GitHub Release $TAG"
+          BODY="Auto sync from GitHub Release $TAG"
           RELEASE=$(curl -sf -X POST \
             "https://gitee.com/api/v5/repos/xhd108/batch_cert_splitter/releases" \
             -H "Content-Type: application/json" \
-            -d "{\"access_token\":\"$GITEE_TOKEN\",\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"$BODY\"}")
+            -d "{\"access_token\":\"$GITEE_TOKEN\",\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"$BODY\",\"target_commitish\":\"master\"}")
           RELEASE_ID=$(echo "$RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
           echo "Gitee Release ID: $RELEASE_ID"
 
