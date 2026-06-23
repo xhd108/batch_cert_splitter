@@ -156,6 +156,7 @@ def api_split():
     file_id  = data.get("file_id", "")
     pdf_name = data.get("pdf_name", "output.pdf")
     records  = data.get("records", [])
+    force    = bool(data.get("force", False))
 
     if not file_id or not records:
         return jsonify({"error": "参数不完整"}), 400
@@ -185,6 +186,28 @@ def api_split():
     hard   = [e for e in errors if not e.startswith("警告")]
     if hard:
         return jsonify({"error": "\n".join(hard)}), 422
+
+    # 重复拆分检查（写文件前）
+    if not force:
+        try:
+            core.init_db()
+            with core.get_conn() as conn:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO batch_files "
+                    "(original_filename, original_path, total_pages, import_time, status) "
+                    "VALUES (?,?,?,?,'split')",
+                    (pdf_name, str(pdf_path), total_pages, datetime.now().isoformat(timespec="seconds")),
+                )
+                db_file_id_check = cur.lastrowid or conn.execute(
+                    "SELECT id FROM batch_files WHERE original_path=?", (str(pdf_path),)
+                ).fetchone()["id"]
+                prev_count = conn.execute(
+                    "SELECT COUNT(*) FROM cert_index WHERE batch_file_id=?", (db_file_id_check,)
+                ).fetchone()[0]
+                if prev_count > 0:
+                    return jsonify({"already_split": True, "prev_count": prev_count})
+        except Exception:
+            pass
 
     # 输出目录
     out_dir = WORK_DIR / file_id / "output"
@@ -236,6 +259,9 @@ def api_split():
             db_file_id = cur.lastrowid or conn.execute(
                 "SELECT id FROM batch_files WHERE original_path=?", (str(pdf_path),)
             ).fetchone()["id"]
+
+            # force=True 时清除旧记录后重新写入
+            conn.execute("DELETE FROM cert_index WHERE batch_file_id=?", (db_file_id,))
 
             split_time = datetime.now().isoformat(timespec="seconds")
             for r in results:

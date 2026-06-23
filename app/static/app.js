@@ -319,30 +319,45 @@ $('btn-split').addEventListener('click', () => {
   btn.disabled    = true;
   btn.textContent = '拆分中…';
 
-  fetch('/api/split', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      file_id:  state.fileId,
-      pdf_name: state.pdfName,
-      records:  state.records,
-    }),
-  })
-    .then(res => res.json())
-    .then(data => {
-      btn.disabled    = false;
-      btn.textContent = '确认并拆分 ▶';
-      if (data.error) {
-        showToast('拆分失败：' + data.error);
-        return;
-      }
-      renderDone(data);
+  doSplit(false);
+
+  function doSplit(force) {
+    fetch('/api/split', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id:  state.fileId,
+        pdf_name: state.pdfName,
+        records:  state.records,
+        force:    force,
+      }),
     })
-    .catch(err => {
-      btn.disabled    = false;
-      btn.textContent = '确认并拆分 ▶';
-      showToast('请求失败：' + err.message);
-    });
+      .then(res => res.json())
+      .then(data => {
+        if (data.already_split) {
+          btn.disabled    = false;
+          btn.textContent = '确认并拆分 ▶';
+          if (confirm(`该文件已拆分过 ${data.prev_count} 份证明，是否覆盖重新拆分？`)) {
+            btn.disabled    = true;
+            btn.textContent = '拆分中…';
+            doSplit(true);
+          }
+          return;
+        }
+        btn.disabled    = false;
+        btn.textContent = '确认并拆分 ▶';
+        if (data.error) {
+          showToast('拆分失败：' + data.error);
+          return;
+        }
+        renderDone(data);
+      })
+      .catch(err => {
+        btn.disabled    = false;
+        btn.textContent = '确认并拆分 ▶';
+        showToast('请求失败：' + err.message);
+      });
+  }
 });
 
 // ── 渲染完成页 ────────────────────────────────────────────────
