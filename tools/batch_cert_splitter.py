@@ -436,6 +436,7 @@ def init_db() -> None:
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             original_filename TEXT    NOT NULL,
             original_path    TEXT    NOT NULL UNIQUE,
+            file_hash        TEXT,
             total_pages      INTEGER,
             import_time      TEXT,
             status           TEXT    DEFAULT 'pending'
@@ -460,6 +461,10 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_cert_batch_no ON cert_index(batch_no);
         CREATE INDEX IF NOT EXISTS idx_cert_file     ON cert_index(batch_file_id);
         """)
+        # 兼容旧数据库：补充 file_hash 列
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(batch_files)")}
+        if "file_hash" not in cols:
+            conn.execute("ALTER TABLE batch_files ADD COLUMN file_hash TEXT")
     log.info(f"数据库已就绪: {DB_PATH}")
 
 

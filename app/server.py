@@ -187,25 +187,24 @@ def api_split():
     if hard:
         return jsonify({"error": "\n".join(hard)}), 422
 
-    # 重复拆分检查（写文件前）
+    # 计算文件 hash（内容去重）
+    import hashlib
+    file_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+
+    # 重复拆分检查（写文件前，按内容 hash 查历史记录）
     if not force:
         try:
             core.init_db()
             with core.get_conn() as conn:
-                cur = conn.execute(
-                    "INSERT OR IGNORE INTO batch_files "
-                    "(original_filename, original_path, total_pages, import_time, status) "
-                    "VALUES (?,?,?,?,'split')",
-                    (pdf_name, str(pdf_path), total_pages, datetime.now().isoformat(timespec="seconds")),
-                )
-                db_file_id_check = cur.lastrowid or conn.execute(
-                    "SELECT id FROM batch_files WHERE original_path=?", (str(pdf_path),)
-                ).fetchone()["id"]
-                prev_count = conn.execute(
-                    "SELECT COUNT(*) FROM cert_index WHERE batch_file_id=?", (db_file_id_check,)
-                ).fetchone()[0]
-                if prev_count > 0:
-                    return jsonify({"already_split": True, "prev_count": prev_count})
+                row = conn.execute(
+                    "SELECT id FROM batch_files WHERE file_hash=?", (file_hash,)
+                ).fetchone()
+                if row:
+                    prev_count = conn.execute(
+                        "SELECT COUNT(*) FROM cert_index WHERE batch_file_id=?", (row["id"],)
+                    ).fetchone()[0]
+                    if prev_count > 0:
+                        return jsonify({"already_split": True, "prev_count": prev_count})
         except Exception:
             pass
 
@@ -250,17 +249,28 @@ def api_split():
         core.init_db()
         now = datetime.now().isoformat(timespec="seconds")
         with core.get_conn() as conn:
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO batch_files "
-                "(original_filename, original_path, total_pages, import_time, status) "
-                "VALUES (?,?,?,?,'split')",
-                (pdf_name, str(pdf_path), total_pages, now),
-            )
-            db_file_id = cur.lastrowid or conn.execute(
-                "SELECT id FROM batch_files WHERE original_path=?", (str(pdf_path),)
-            ).fetchone()["id"]
+            # 优先按 hash 查已有记录（同一文件多次上传也能命中）
+            existing = conn.execute(
+                "SELECT id FROM batch_files WHERE file_hash=?", (file_hash,)
+            ).fetchone()
+            if existing:
+                db_file_id = existing["id"]
+                conn.execute(
+                    "UPDATE batch_files SET original_filename=?, original_path=?, status='split' WHERE id=?",
+                    (pdf_name, str(pdf_path), db_file_id),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO batch_files "
+                    "(original_filename, original_path, file_hash, total_pages, import_time, status) "
+                    "VALUES (?,?,?,?,?,'split')",
+                    (pdf_name, str(pdf_path), file_hash, total_pages, now),
+                )
+                db_file_id = cur.lastrowid or conn.execute(
+                    "SELECT id FROM batch_files WHERE original_path=?", (str(pdf_path),)
+                ).fetchone()["id"]
 
-            # force=True 时清除旧记录后重新写入
+            # 清除旧 cert_index，避免重复入库
             conn.execute("DELETE FROM cert_index WHERE batch_file_id=?", (db_file_id,))
 
             split_time = datetime.now().isoformat(timespec="seconds")
