@@ -466,16 +466,35 @@ def _sse(data: dict) -> str:
 
 # ── 启动入口 ──────────────────────────────────────────────────
 def main():
+    import socket
     import threading
     import webbrowser
 
-    port = 5050
+    # 自动找可用端口
+    def find_port(start=5050):
+        for p in range(start, start + 20):
+            try:
+                s = socket.socket()
+                s.bind(("127.0.0.1", p))
+                s.close()
+                return p
+            except OSError:
+                continue
+        return start  # 兜底，让 Flask 自己报错
+
+    port = find_port()
     url  = f"http://127.0.0.1:{port}"
 
     def open_browser():
         import time
-        time.sleep(1.2)
-        webbrowser.open(url)
+        time.sleep(1.5)
+        opened = webbrowser.open(url)
+        # Linux 上 webbrowser 可能静默失败，用 xdg-open 兜底
+        if not opened and sys.platform.startswith("linux"):
+            import subprocess
+            subprocess.Popen(["xdg-open", url],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
 
     threading.Thread(target=open_browser, daemon=True).start()
     print(f"\n批签发证明拆分工具已启动: {url}")
