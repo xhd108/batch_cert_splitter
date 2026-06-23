@@ -47,7 +47,6 @@ fpm -s dir -t deb \
     --maintainer "批签发工具 <noreply@example.com>" \
     --description "批签发证明拆分工具" \
     --url "https://github.com/xhd108/batch_cert_splitter" \
-    --prefix /opt/cert-splitter \
     --after-install build/linux/postinstall.sh \
     "dist/批签发拆分工具/=/opt/cert-splitter/"
 
