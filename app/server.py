@@ -191,7 +191,8 @@ def api_split():
     import hashlib
     file_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
 
-    # 重复拆分检查（写文件前，按内容 hash 查历史记录）
+    # 重复拆分检查（写文件前）
+    # 优先按 hash 查，兜底按文件名查（兼容 hash 字段为空的旧记录）
     if not force:
         try:
             core.init_db()
@@ -199,6 +200,11 @@ def api_split():
                 row = conn.execute(
                     "SELECT id FROM batch_files WHERE file_hash=?", (file_hash,)
                 ).fetchone()
+                if not row:
+                    row = conn.execute(
+                        "SELECT id FROM batch_files WHERE original_filename=? ORDER BY id DESC LIMIT 1",
+                        (pdf_name,)
+                    ).fetchone()
                 if row:
                     prev_count = conn.execute(
                         "SELECT COUNT(*) FROM cert_index WHERE batch_file_id=?", (row["id"],)
@@ -249,15 +255,20 @@ def api_split():
         core.init_db()
         now = datetime.now().isoformat(timespec="seconds")
         with core.get_conn() as conn:
-            # 优先按 hash 查已有记录（同一文件多次上传也能命中）
+            # 按 hash 查，兜底按文件名查（兼容旧记录 hash 为空）
             existing = conn.execute(
                 "SELECT id FROM batch_files WHERE file_hash=?", (file_hash,)
             ).fetchone()
+            if not existing:
+                existing = conn.execute(
+                    "SELECT id FROM batch_files WHERE original_filename=? ORDER BY id DESC LIMIT 1",
+                    (pdf_name,)
+                ).fetchone()
             if existing:
                 db_file_id = existing["id"]
                 conn.execute(
-                    "UPDATE batch_files SET original_filename=?, original_path=?, status='split' WHERE id=?",
-                    (pdf_name, str(pdf_path), db_file_id),
+                    "UPDATE batch_files SET original_filename=?, original_path=?, file_hash=?, status='split' WHERE id=?",
+                    (pdf_name, str(pdf_path), file_hash, db_file_id),
                 )
             else:
                 cur = conn.execute(
