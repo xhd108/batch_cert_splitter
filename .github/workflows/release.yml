@@ -156,10 +156,10 @@ jobs:
         run: |
           ARCH=${{ matrix.arch }}
           PLATFORM="linux/amd64"
-          IMAGE="python:3.11-slim"
+          IMAGE="python:3.11-slim-bullseye"
           if [ "$ARCH" = "aarch64" ]; then
             PLATFORM="linux/arm64"
-            IMAGE="arm64v8/python:3.11-slim"
+            IMAGE="arm64v8/python:3.11-slim-bullseye"
           fi
           docker run --rm --platform "$PLATFORM" \
             -v "$PWD:/app" -w /app \
