@@ -177,7 +177,7 @@ jobs:
 
   # ── 发布 GitHub Release ──────────────────────────────────────
   release:
-    needs: [build-macos-arm64, build-windows]
+    needs: [build-macos-arm64, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
