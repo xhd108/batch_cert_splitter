@@ -32,10 +32,13 @@ pyinstaller build/cert_splitter.spec \
     --workpath build/_pyinstaller_work \
     --noconfirm
 
+# 重命名为 ASCII 目录（fpm 无法正确处理中文路径）
+mv "dist/批签发拆分工具" "dist/cert-splitter-pkg"
+
 # 复制 Tesseract 语言包进程序目录
-mkdir -p "dist/批签发拆分工具/tessdata"
+mkdir -p "dist/cert-splitter-pkg/tessdata"
 cp /usr/share/tesseract-ocr/*/tessdata/{chi_sim,eng}.traineddata \
-   "dist/批签发拆分工具/tessdata/" 2>/dev/null || true
+   "dist/cert-splitter-pkg/tessdata/" 2>/dev/null || true
 
 # 打包 .deb
 VER="${VERSION#v}"   # strip leading 'v' if present
@@ -44,11 +47,11 @@ fpm -s dir -t deb \
     --name "cert-splitter" \
     --version "$VERSION" \
     --architecture "$( [ "$ARCH" = "aarch64" ] && echo arm64 || echo amd64 )" \
-    --maintainer "批签发工具 <noreply@example.com>" \
-    --description "批签发证明拆分工具" \
+    --maintainer "cert-splitter <noreply@example.com>" \
+    --description "cert-splitter" \
     --url "https://github.com/xhd108/batch_cert_splitter" \
     --after-install build/linux/postinstall.sh \
-    "dist/批签发拆分工具/=/opt/cert-splitter/"
+    "dist/cert-splitter-pkg/=/opt/cert-splitter/"
 
 mv *.deb "dist/${DEB_NAME}" 2>/dev/null || true
 echo "✓ .deb 已生成: dist/${DEB_NAME}"
