@@ -156,11 +156,12 @@ jobs:
         run: |
           ARCH=${{ matrix.arch }}
           PLATFORM="linux/amd64"
-          IMAGE="python:3.11-slim-bullseye"
           if [ "$ARCH" = "aarch64" ]; then
             PLATFORM="linux/arm64"
-            IMAGE="arm64v8/python:3.11-slim-bullseye"
           fi
+          # 统一用多架构镜像，由 --platform 决定拉哪个变体
+          # Bullseye = glibc 2.31，兼容麒麟/UOS
+          IMAGE="python:3.11-slim-bullseye"
           docker run --rm --platform "$PLATFORM" \
             -v "$PWD:/app" -w /app \
             -e VERSION="${{ github.ref_name }}" \
